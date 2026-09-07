@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>vMix Web Switcher</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#090d16">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+  <!-- ==================== LOGIN SCREEN ==================== -->
+  <div id="login-modal" class="modal-overlay active">
+    <div class="modal-card login-card">
+      <div class="login-header">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" width="36" height="36" fill="currentColor">
+            <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v12h16V6H4zm3 2h2v8H7V8zm4 0h2v8h-2V8zm4 0h2v8h-2V8z"/>
+          </svg>
+        </div>
+        <h2>vMix Switcher</h2>
+        <p>Enter the password to access the switcher</p>
+      </div>
+      <form id="login-form">
+        <div class="form-group">
+          <label for="login-password">Password</label>
+          <input type="password" id="login-password" placeholder="Enter password" autocomplete="current-password" autofocus required>
+        </div>
+        <div id="login-error" class="error-banner hidden"></div>
+        <button type="submit" class="btn btn-primary btn-block" id="login-btn">
+          <span>Connect to Switcher</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== MAIN SWITCHER INTERFACE ==================== -->
+  <div id="app-container" class="app-layout hidden">
+
+    <!-- Top Navigation / Status Header -->
+    <header class="top-bar">
+      <div class="brand-section">
+        <div class="brand-logo">
+          <span class="live-dot"></span>
+          <span class="brand-title">vMix Switcher</span>
+        </div>
+        <div id="vmix-status-badge" class="status-pill offline">
+          <span class="status-indicator"></span>
+          <span id="vmix-status-text">Connecting...</span>
+        </div>
+      </div>
+
+      <!-- Broadcast Status Badges (REC / STREAM) -->
+      <div class="broadcast-status-group">
+        <div id="rec-badge" class="badge-indicator inactive">
+          <span class="rec-dot"></span> REC
+        </div>
+        <div id="stream-badge" class="badge-indicator inactive">
+          <span class="stream-dot"></span> STREAM
+        </div>
+        <div id="fullscreen-badge" class="badge-indicator inactive">
+          FULLSCREEN
+        </div>
+      </div>
+
+      <!-- Quick Action Controls -->
+      <div class="nav-actions">
+        <button id="sound-toggle-btn" class="btn btn-icon btn-secondary btn-sm" title="Toggle Click Sound">
+          <svg id="sound-icon-on" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+          </svg>
+          <svg id="sound-icon-off" class="hidden" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+          </svg>
+        </button>
+        <button id="thumb-toggle-btn" class="btn btn-icon btn-secondary btn-sm" title="Toggle Live Thumbnails">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+          </svg>
+        </button>
+        <button id="manage-sources-btn" class="btn btn-secondary btn-sm" title="Manage / Ignore Sources">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M3 4h18v2H3V4zm0 7h12v2H3v-2zm0 7h18v2H3v-2z"/>
+          </svg>
+          <span class="btn-label">Manage Sources</span>
+          <span id="ignored-count-badge" class="pill-badge hidden">0 hidden</span>
+        </button>
+        <button id="settings-btn" class="btn btn-secondary btn-sm" title="Settings">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+          </svg>
+          <span class="btn-label">Settings</span>
+        </button>
+        <button id="logout-btn" class="btn btn-icon btn-secondary btn-sm" title="Log Out">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42A7.92 7.92 0 0 1 20 12c0 4.42-3.58 8-8 8s-8-3.58-8-8c0-2.47 1.13-4.68 2.91-6.15l-1.42-1.42C3.12 6.36 2 9.04 2 12c0 5.52 4.48 10 10 10s10-4.48 10-10c0-2.96-1.12-5.64-3.17-6.83z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Program & Preview Tally Monitors -->
+    <div class="tallies-bar">
+      <!-- Program Display -->
+      <div class="tally-box program-box">
+        <div class="tally-tag">PROGRAM / LIVE (MAIN OUTPUT)</div>
+        <div class="tally-content">
+          <span class="tally-num" id="pgm-number">--</span>
+          <span class="tally-name" id="pgm-name">No Active Input</span>
+        </div>
+      </div>
+
+      <!-- Transition Center -->
+      <div class="transition-center">
+        <div class="transition-control-row">
+          <button id="btn-cut" class="btn btn-action btn-cut" title="Instant Cut">
+            CUT
+          </button>
+          <button id="btn-auto" class="btn btn-action btn-auto" title="Execute Default Transition">
+            <span id="btn-auto-label">AUTO</span>
+          </button>
+        </div>
+        <div class="transition-sub-row">
+          <button id="btn-ftb" class="btn btn-ftb" title="Fade to Black">FTB</button>
+          <div class="trans-select-wrapper">
+            <select id="quick-transition-select" title="Active Default Transition">
+              <option value="Fade">Fade</option>
+              <option value="Cut">Cut</option>
+              <option value="Zoom">Zoom</option>
+              <option value="Wipe">Wipe</option>
+              <option value="Slide">Slide</option>
+              <option value="Fly">Fly</option>
+              <option value="CrossZoom">CrossZoom</option>
+              <option value="Transition1">Trans 1</option>
+              <option value="Transition2">Trans 2</option>
+            </select>
+          </div>
+          <button id="btn-quickplay" class="btn btn-quickplay" title="QuickPlay">QuickPlay</button>
+        </div>
+      </div>
+
+      <!-- Preview Display -->
+      <div class="tally-box preview-box">
+        <div class="tally-tag">PREVIEW (NEXT)</div>
+        <div class="tally-content">
+          <span class="tally-num" id="prv-number">--</span>
+          <span class="tally-name" id="prv-name">No Preview Input</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mode Banner & Info -->
+    <div class="mode-info-strip">
+      <div class="info-left">
+        <span class="mode-badge" id="current-mode-badge">Direct Switch Mode</span>
+        <span class="mode-desc" id="current-mode-desc">Tapping a source transitions it directly to the Main Output.</span>
+      </div>
+      <div class="info-right">
+        <span id="source-filter-status" class="filter-indicator">Showing all sources</span>
+      </div>
+    </div>
+
+    <!-- Main Switcher Buttons Grid -->
+    <main class="switcher-viewport">
+      <div id="sources-grid" class="sources-grid">
+        <!-- Buttons generated dynamically via app.js -->
+        <div class="loading-placeholder">
+          <div class="spinner"></div>
+          <p>Connecting to vMix and loading sources...</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- Bottom Status Bar -->
+    <footer class="bottom-bar">
+      <div class="bottom-info">
+        <span id="vmix-version-label">vMix: Unknown</span>
+        <span class="bullet">•</span>
+        <span id="vmix-preset-label">Preset: None</span>
+      </div>
+      <div class="bottom-tips">
+        <span id="haptic-label">Touch haptics enabled</span>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- ==================== MANAGE / IGNORE SOURCES MODAL ==================== -->
+  <div id="manage-sources-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3>Manage Switcher Sources</h3>
+          <p class="modal-subtitle">Choose which sources appear on the switcher buttons. Ignored sources stay in vMix untouched.</p>
+        </div>
+        <button class="btn-close" id="close-manage-sources-btn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="manage-sources-toolbar">
+          <input type="text" id="source-search-input" placeholder="Search sources..." class="search-input">
+          <div class="toolbar-actions">
+            <button id="unhide-all-btn" class="btn btn-secondary btn-sm">Show All Sources</button>
+          </div>
+        </div>
+
+        <div class="sources-table-container">
+          <table class="sources-table">
+            <thead>
+              <tr>
+                <th style="width: 70px;">Input #</th>
+                <th>Source Title in vMix</th>
+                <th>Custom Button Label</th>
+                <th>Type</th>
+                <th style="width: 140px; text-align: center;">Display on Switcher</th>
+              </tr>
+            </thead>
+            <tbody id="manage-sources-table-body">
+              <!-- Populated dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <span class="footer-note">Changes take effect instantly on all connected devices.</span>
+        <button class="btn btn-primary" id="done-manage-sources-btn">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== SETTINGS MODAL ==================== -->
+  <div id="settings-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-medium">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3>Switcher Settings</h3>
+          <p class="modal-subtitle">Configure vMix connection, transitions, and network access.</p>
+        </div>
+        <button class="btn-close" id="close-settings-btn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <form id="settings-form">
+
+          <!-- Section: Switching Behavior -->
+          <div class="settings-section">
+            <h4>Switching Behavior</h4>
+
+            <div class="form-group">
+              <label for="setting-switcher-mode">Switcher Action</label>
+              <select id="setting-switcher-mode">
+                <option value="direct">Direct to Program Output (Transition directly on press)</option>
+                <option value="preview_take">Preview + Take Mode (Select in Preview, Cut/Auto to switch)</option>
+              </select>
+              <small class="field-hint">Direct mode transitions the pressed source immediately to the main screen.</small>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group col-half">
+                <label for="setting-default-trans">Default Transition</label>
+                <select id="setting-default-trans">
+                  <option value="Fade">Fade</option>
+                  <option value="Cut">Cut</option>
+                  <option value="Zoom">Zoom</option>
+                  <option value="Wipe">Wipe</option>
+                  <option value="Slide">Slide</option>
+                  <option value="Fly">Fly</option>
+                  <option value="CrossZoom">CrossZoom</option>
+                  <option value="Transition1">Transition 1</option>
+                  <option value="Transition2">Transition 2</option>
+                  <option value="Transition3">Transition 3</option>
+                  <option value="Transition4">Transition 4</option>
+                </select>
+              </div>
+              <div class="form-group col-half">
+                <label for="setting-trans-duration">Duration (ms)</label>
+                <input type="number" id="setting-trans-duration" min="50" max="5000" step="50" value="500">
+              </div>
+            </div>
+
+            <div class="form-group checkbox-group" style="margin-top: 14px;">
+              <label class="toggle-switch">
+                <input type="checkbox" id="setting-show-thumbnails">
+                <span class="slider"></span>
+              </label>
+              <div class="toggle-label-group">
+                <span class="toggle-title">Show Live Video Thumbnails</span>
+                <span class="toggle-sub">Display real-time preview images on switcher buttons</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section: vMix Connection -->
+          <div class="settings-section">
+            <h4>vMix Connection</h4>
+            <div class="form-row">
+              <div class="form-group col-three-quarter">
+                <label for="setting-vmix-host">vMix Host / IP</label>
+                <input type="text" id="setting-vmix-host" placeholder="127.0.0.1">
+              </div>
+              <div class="form-group col-quarter">
+                <label for="setting-vmix-port">Port</label>
+                <input type="number" id="setting-vmix-port" placeholder="8088">
+              </div>
+            </div>
+
+            <div class="form-group checkbox-group">
+              <label class="toggle-switch">
+                <input type="checkbox" id="setting-mock-mode">
+                <span class="slider"></span>
+              </label>
+              <div class="toggle-label-group">
+                <span class="toggle-title">Offline Simulator / Demo Mode</span>
+                <span class="toggle-sub">Enable mock sources for testing without vMix running</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section: Security & Password -->
+          <div class="settings-section">
+            <h4>Access & Password</h4>
+            <div class="form-group">
+              <label for="setting-new-password">Change Password</label>
+              <input type="password" id="setting-new-password" placeholder="Leave blank to keep current password">
+              <small class="field-hint">Anyone connecting over the local network must enter this password.</small>
+            </div>
+          </div>
+
+          <!-- Section: Network Info -->
+          <div class="settings-section">
+            <h4>Network Access URLs</h4>
+            <div id="network-ips-list" class="network-ips-box">
+              <p class="loading-sub">Loading network addresses...</p>
+            </div>
+          </div>
+
+          <div id="settings-save-status" class="status-msg hidden"></div>
+
+          <div class="modal-footer no-padding-bottom">
+            <button type="button" class="btn btn-secondary" id="cancel-settings-btn">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="save-settings-btn">Save Settings</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

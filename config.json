@@ -1,0 +1,14 @@
+{
+  "port": 3000,
+  "password": "vmix",
+  "vmixHost": "127.0.0.1",
+  "vmixPort": 8088,
+  "defaultTransition": "Fade",
+  "transitionDuration": 500,
+  "switcherMode": "direct",
+  "ignoredInputs": [],
+  "inputAliases": {},
+  "inputColors": {},
+  "pollIntervalMs": 300,
+  "mockMode": false
+}
