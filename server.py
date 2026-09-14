@@ -76,9 +76,25 @@ async def broadcast_state(state: Dict[str, Any]) -> None:
 # Hook vMix client updates to broadcast
 vmix_client.add_callback(broadcast_state)
 
+def _asyncio_reset_guard(loop: asyncio.AbstractEventLoop, context: Dict[str, Any]) -> None:
+    # Windows: a phone/tablet/browser dropping its socket makes the proactor raise
+    # WinError 10054 inside _call_connection_lost. Harmless, but asyncio prints it.
+    exc = context.get("exception")
+    if isinstance(exc, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+        return
+    loop.default_exception_handler(context)
+
+def install_asyncio_reset_guard() -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.set_exception_handler(_asyncio_reset_guard)
+
 # App Lifecycle
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    install_asyncio_reset_guard()
     vmix_client.start()
     yield
     vmix_client.stop()
@@ -133,6 +149,7 @@ class ConfigUpdateRequest(BaseModel):
     transitionDuration: Optional[int] = None
     switcherMode: Optional[str] = None
     pollIntervalMs: Optional[int] = None
+    previewFps: Optional[float] = None
     mockMode: Optional[bool] = None
     newPassword: Optional[str] = None
 
@@ -209,7 +226,7 @@ async def execute_function(req: FunctionRequest, _: bool = Depends(require_auth)
 @app.get("/api/vmix/thumbnail/{input_id}")
 async def get_thumbnail(input_id: str, _: bool = Depends(require_auth)):
     data, mime = await vmix_client.get_thumbnail(input_id)
-    return Response(content=data, media_type=mime, headers={"Cache-Control": "public, max-age=1"})
+    return Response(content=data, media_type=mime, headers={"Cache-Control": "no-store"})
 
 @app.post("/api/vmix/overlay")
 async def toggle_overlay(req: OverlayRequest, _: bool = Depends(require_auth)):
@@ -294,6 +311,8 @@ async def update_config(req: ConfigUpdateRequest, _: bool = Depends(require_auth
         updates["switcherMode"] = req.switcherMode
     if req.pollIntervalMs is not None:
         updates["pollIntervalMs"] = int(req.pollIntervalMs)
+    if req.previewFps is not None:
+        updates["previewFps"] = min(10.0, max(0.5, float(req.previewFps)))
     if req.mockMode is not None:
         updates["mockMode"] = bool(req.mockMode)
     if req.newPassword and len(req.newPassword.strip()) >= 3:

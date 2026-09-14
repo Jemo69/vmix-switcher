@@ -22,6 +22,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "inputAliases": {},        # Friendly nicknames { "1": "Cam 1" }
     "inputColors": {},
     "pollIntervalMs": 300,
+    "previewFps": 4,           # Live preview snapshot refresh rate (0.5 - 10)
     "mockMode": False,
     "authTokenSecret": secrets.token_hex(24)
 }

@@ -9,6 +9,9 @@ class SwitcherApp {
     this.sourceSearchFilter = '';
     this.soundEnabled = true;
     this.showThumbnails = localStorage.getItem('vmix_show_thumbnails') !== 'false';
+    this.previewFps = parseFloat(localStorage.getItem('vmix_preview_fps')) || 4;
+    this.visibleThumbs = new WeakSet();
+    this.thumbObserver = null;
     this.audioCtx = null;
     this.pingTimer = null;
     this.currentView = 'switcher';
@@ -111,6 +114,7 @@ class SwitcherApp {
       settingVmixPort: document.getElementById('setting-vmix-port'),
       settingMockMode: document.getElementById('setting-mock-mode'),
       settingShowThumbnails: document.getElementById('setting-show-thumbnails'),
+      settingPreviewFps: document.getElementById('setting-preview-fps'),
       settingNewPassword: document.getElementById('setting-new-password'),
       networkIpsList: document.getElementById('network-ips-list'),
       settingsSaveStatus: document.getElementById('settings-save-status'),
@@ -587,43 +591,102 @@ class SwitcherApp {
     }
   }
 
+  setPreviewFps(fps) {
+    const next = Math.min(10, Math.max(0.5, parseFloat(fps) || 4));
+    if (next === this.previewFps) return;
+    this.previewFps = next;
+    localStorage.setItem('vmix_preview_fps', String(next));
+    this.startThumbnailRefresh();
+  }
+
+  getPreviewIntervalMs() {
+    return Math.max(80, Math.round(1000 / this.previewFps));
+  }
+
+  // Only poll images that are on screen, and never stack requests on a slow link
+  trackThumbVisibility(img) {
+    if (!this.thumbObserver) {
+      this.thumbObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            this.visibleThumbs.add(entry.target);
+          } else {
+            this.visibleThumbs.delete(entry.target);
+          }
+        });
+      }, { rootMargin: '250px' });
+    }
+    if (!img.dataset.thumbTracked) {
+      img.dataset.thumbTracked = '1';
+      this.thumbObserver.observe(img);
+      this.visibleThumbs.add(img);
+    }
+  }
+
+  refreshThumb(img) {
+    const inputNum = img.getAttribute('data-thumb-input');
+    if (!inputNum) return;
+    this.trackThumbVisibility(img);
+    if (!this.visibleThumbs.has(img)) return;
+    if (img.dataset.thumbLoading === '1') return;
+
+    img.dataset.thumbLoading = '1';
+    img.onload = img.onerror = () => { img.dataset.thumbLoading = '0'; };
+    img.src = `${API.getThumbnailUrl(inputNum)}&_t=${Date.now()}`;
+  }
+
   startThumbnailRefresh() {
     this.stopThumbnailRefresh();
     if (!this.showThumbnails) return;
     this.thumbTimer = setInterval(() => {
       if (!this.showThumbnails || this.dom.appContainer.classList.contains('hidden')) return;
-      const now = Date.now();
+      if (document.hidden) return;
 
       // Refresh Switcher Grid cards
       const imgs = this.dom.sourcesGrid.querySelectorAll('.source-thumb-img');
-      imgs.forEach(img => {
-        const inputNum = img.getAttribute('data-thumb-input');
-        if (inputNum) {
-          img.src = `${API.getThumbnailUrl(inputNum)}&_t=${now}`;
-        }
-      });
+      imgs.forEach(img => this.refreshThumb(img));
 
       // Refresh Live Monitors (Program & Preview)
       if (this.currentState) {
         const activeNum = this.currentState.active || 'active';
         const previewNum = this.currentState.preview || 'preview';
-        if (this.dom.pgmMonitorImg) this.dom.pgmMonitorImg.src = `${API.getThumbnailUrl(activeNum)}&_t=${now}`;
-        if (this.dom.prvMonitorImg) this.dom.prvMonitorImg.src = `${API.getThumbnailUrl(previewNum)}&_t=${now}`;
-        if (this.dom.mvPgmImg) this.dom.mvPgmImg.src = `${API.getThumbnailUrl(activeNum)}&_t=${now}`;
-        if (this.dom.mvPrvImg) this.dom.mvPrvImg.src = `${API.getThumbnailUrl(previewNum)}&_t=${now}`;
+        // Input changed on a monitor: force an immediate re-fetch (bypasses load gating)
+        if (activeNum !== this.lastMonitoredActive) {
+          this.lastMonitoredActive = activeNum;
+          [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => {
+            if (!img) return;
+            img.dataset.thumbLoading = '0';
+            img.setAttribute('data-thumb-input', activeNum);
+            img.src = `${API.getThumbnailUrl(activeNum)}&_t=${Date.now()}`;
+          });
+        }
+        if (previewNum !== this.lastMonitoredPreview) {
+          this.lastMonitoredPreview = previewNum;
+          [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => {
+            if (!img) return;
+            img.dataset.thumbLoading = '0';
+            img.setAttribute('data-thumb-input', previewNum);
+            img.src = `${API.getThumbnailUrl(previewNum)}&_t=${Date.now()}`;
+          });
+        }
+
+        [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => {
+          if (img) img.setAttribute('data-thumb-input', activeNum);
+        });
+        [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => {
+          if (img) img.setAttribute('data-thumb-input', previewNum);
+        });
+
+        [this.dom.pgmMonitorImg, this.dom.prvMonitorImg, this.dom.mvPgmImg, this.dom.mvPrvImg]
+          .forEach(img => { if (img) this.refreshThumb(img); });
       }
 
       // Refresh Multiviewer Camera grid thumbnails
       if (this.dom.multiviewCamsGrid) {
         const mvImgs = this.dom.multiviewCamsGrid.querySelectorAll('.mv-cam-img');
-        mvImgs.forEach(img => {
-          const inputNum = img.getAttribute('data-thumb-input');
-          if (inputNum) {
-            img.src = `${API.getThumbnailUrl(inputNum)}&_t=${now}`;
-          }
-        });
+        mvImgs.forEach(img => this.refreshThumb(img));
       }
-    }, 2000);
+    }, this.getPreviewIntervalMs());
   }
 
   stopThumbnailRefresh() {
@@ -641,6 +704,11 @@ class SwitcherApp {
   // State Updates & Rendering
   handleStateUpdate(state) {
     this.currentState = state;
+
+    // Live preview refresh rate (server is the source of truth)
+    if (state.previewFps && state.previewFps !== this.previewFps) {
+      this.setPreviewFps(state.previewFps);
+    }
 
     // Connection badge
     if (state.isMock) {
@@ -1245,6 +1313,9 @@ class SwitcherApp {
       if (this.dom.settingShowThumbnails) {
         this.dom.settingShowThumbnails.checked = this.showThumbnails;
       }
+      if (this.dom.settingPreviewFps) {
+        this.dom.settingPreviewFps.value = String(cfg.previewFps || this.previewFps);
+      }
       this.dom.settingNewPassword.value = '';
 
       // Load network IPs
@@ -1294,6 +1365,11 @@ class SwitcherApp {
       vmixPort: parseInt(this.dom.settingVmixPort.value, 10),
       mockMode: this.dom.settingMockMode.checked
     };
+
+    if (this.dom.settingPreviewFps) {
+      this.setPreviewFps(parseFloat(this.dom.settingPreviewFps.value));
+      updates.previewFps = this.previewFps;
+    }
 
     if (this.dom.settingShowThumbnails) {
       this.showThumbnails = this.dom.settingShowThumbnails.checked;

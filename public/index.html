@@ -437,6 +437,18 @@
                 <span class="toggle-sub">Display real-time preview images on switcher buttons</span>
               </div>
             </div>
+
+            <div class="form-group" style="margin-top: 12px;">
+              <label for="setting-preview-fps">Live Preview Refresh Rate</label>
+              <select id="setting-preview-fps">
+                <option value="1">1 fps (lowest load)</option>
+                <option value="2">2 fps</option>
+                <option value="4">4 fps (balanced)</option>
+                <option value="6">6 fps (smooth)</option>
+                <option value="10">10 fps (turbo - needs vMix on the same PC)</option>
+              </select>
+              <small class="field-hint">How often preview images are re-captured from vMix. Higher rates mean more load on the vMix machine.</small>
+            </div>
           </div>
 
           <!-- Section: vMix Connection -->

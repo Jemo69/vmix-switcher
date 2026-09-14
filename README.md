@@ -133,7 +133,7 @@ The switcher features 3 dedicated operational modes accessible via the top tab b
 - **Change transition:** dropdown at top center (`Fade`, `Cut`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Transition 1/2` + duration).
 - **Preview + Take mode:** Settings ⚙️ → *Switcher Action* → stage in Preview, then **CUT** / **AUTO**.
 - **Hide sources:** *Manage Sources* → toggle off *Display on Switcher* (e.g. audio, color bars). Optional **Display Nickname** per input.
-- **Settings ⚙️:** switcher mode, default transition + duration, vMix host/port, password, poll interval, **Offline Simulator Mode** (rehearse without vMix).
+- **Settings ⚙️:** switcher mode, default transition + duration, vMix host/port, password, poll interval, **Live Preview Refresh Rate** (1–10 fps), **Offline Simulator Mode** (rehearse without vMix).
 
 ---
 
@@ -150,6 +150,7 @@ Settings persist in `config.json`:
 | `vmixHost` / `vmixPort` | `127.0.0.1` / `8088` | Where vMix Web Controller lives |
 | `defaultTransition` / `transitionDuration` | `Fade` / `500` | Transition + ms |
 | `switcherMode` | `direct` | `direct` or `preview_take` |
+| `previewFps` | `4` | Live preview snapshot refresh rate (0.5–10 fps). Higher = smoother previews, more load on the vMix PC |
 | `mockMode` | `false` | Simulator when vMix is offline |
 
 ---

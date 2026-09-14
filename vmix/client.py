@@ -16,6 +16,7 @@ class VMixClient:
         self.poll_task: Optional[asyncio.Task] = None
         self.callbacks: List[Callable[[Dict[str, Any]], Any]] = []
         self._thumb_cache: Dict[str, tuple[float, bytes, str]] = {}  # key -> (timestamp, data, content_type)
+        self._thumb_inflight: Dict[str, asyncio.Future] = {}  # key -> shared in-flight fetch
         self._last_signature: Optional[tuple] = None
         self._last_broadcast_time: float = 0.0
 
@@ -208,7 +209,8 @@ class VMixClient:
             "ignoredCount": len(all_inputs) - len(visible_inputs),
             "defaultTransition": cfg.get("defaultTransition", "Fade"),
             "transitionDuration": cfg.get("transitionDuration", 500),
-            "switcherMode": cfg.get("switcherMode", "direct")
+            "switcherMode": cfg.get("switcherMode", "direct"),
+            "previewFps": self._preview_fps()
         }
 
         self.last_state = full_state
@@ -226,6 +228,7 @@ class VMixClient:
             full_state.get("defaultTransition"),
             full_state.get("transitionDuration"),
             full_state.get("switcherMode"),
+            full_state.get("previewFps"),
             len(visible_inputs),
             tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("volume"), i.get("customTitle"), i.get("isIgnored")) for i in all_inputs)
         )
@@ -329,14 +332,47 @@ class VMixClient:
         else:
             target_id = input_id
 
-        now = time.time()
         cache_key = str(target_id)
-        if cache_key in self._thumb_cache:
-            ts, data, mime = self._thumb_cache[cache_key]
-            if now - ts < 0.8:
-                return data, mime
+        now = time.time()
+        cached = self._thumb_cache.get(cache_key)
+        if cached and (now - cached[0]) < self._thumb_cache_ttl():
+            return cached[1], cached[2]
 
+        # Collapse concurrent requests for the same input into one vMix fetch
+        pending = self._thumb_inflight.get(cache_key)
+        if pending is not None:
+            return await pending
+
+        pending = asyncio.get_running_loop().create_future()
+        self._thumb_inflight[cache_key] = pending
+        try:
+            result = await self._load_thumbnail(target_id, cache_key)
+        except BaseException as err:
+            if not pending.done():
+                pending.set_exception(err)
+            raise
+        else:
+            if not pending.done():
+                pending.set_result(result)
+            return result
+        finally:
+            self._thumb_inflight.pop(cache_key, None)
+
+    def _thumb_cache_ttl(self) -> float:
+        fps = self._preview_fps()
+        return min(0.5, max(0.04, 0.25 / fps))
+
+    def _preview_fps(self) -> float:
+        try:
+            fps = float(config_manager.get().get("previewFps", 4))
+        except (TypeError, ValueError):
+            fps = 4.0
+        return min(10.0, max(0.5, fps))
+
+    async def _load_thumbnail(self, target_id: Any, cache_key: str) -> tuple[bytes, str]:
+        now = time.time()
         cfg = config_manager.get()
+
         if cfg.get("mockMode", False) or not self.connected:
             svg = self._generate_mock_svg(str(target_id))
             data = svg.encode("utf-8")
@@ -349,10 +385,13 @@ class VMixClient:
         url = f"http://{host}:{port}/Thumbnail.aspx?{param_name}={urllib.parse.quote(str(target_id))}"
 
         try:
-            raw_bytes = await asyncio.to_thread(self._fetch_binary, url, 1.5)
+            raw_bytes = await asyncio.to_thread(self._fetch_binary, url, max(0.8, 2.0 / self._preview_fps()))
             self._thumb_cache[cache_key] = (now, raw_bytes, "image/jpeg")
             return raw_bytes, "image/jpeg"
         except Exception:
+            cached = self._thumb_cache.get(cache_key)
+            if cached:
+                return cached[1], cached[2]
             svg = self._generate_mock_svg(str(target_id))
             data = svg.encode("utf-8")
             return data, "image/svg+xml"
