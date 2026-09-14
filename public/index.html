@@ -52,17 +52,42 @@
         </div>
       </div>
 
-      <!-- Broadcast Status Badges (REC / STREAM) -->
+      <!-- App Mode Navigation Tabs -->
+      <nav class="app-mode-tabs" role="tablist">
+        <button id="tab-switcher" class="mode-tab-btn active" data-view="switcher">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M4 6h16v12H4z M2 4v16h20V4H2zm4 4h4v4H6zm0 6h4v2H6zm6-6h6v8h-6z"/>
+          </svg>
+          <span>Video Switcher</span>
+        </button>
+        <button id="tab-audio" class="mode-tab-btn" data-view="audio">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5zm6 6c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+          </svg>
+          <span>Mic &amp; Audio</span>
+        </button>
+        <button id="tab-multiview" class="mode-tab-btn" data-view="multiview">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z"/>
+          </svg>
+          <span>Big Screen Preview</span>
+        </button>
+      </nav>
+
+      <!-- Broadcast Control Buttons (Interactive: REC, STREAM, EXTERNAL, FULLSCREEN) -->
       <div class="broadcast-status-group">
-        <div id="rec-badge" class="badge-indicator inactive">
-          <span class="rec-dot"></span> REC
-        </div>
-        <div id="stream-badge" class="badge-indicator inactive">
-          <span class="stream-dot"></span> STREAM
-        </div>
-        <div id="fullscreen-badge" class="badge-indicator inactive">
-          FULLSCREEN
-        </div>
+        <button id="rec-badge" class="badge-indicator inactive" title="Click to Start/Stop Recording">
+          <span class="rec-dot"></span> <span class="badge-text">REC</span> <span id="rec-timer" class="rec-timer-pill"></span>
+        </button>
+        <button id="stream-badge" class="badge-indicator inactive" title="Click to Start/Stop Streaming">
+          <span class="stream-dot"></span> <span class="badge-text">STREAM</span>
+        </button>
+        <button id="external-badge" class="badge-indicator inactive" title="Click to Start/Stop External Output">
+          <span class="ext-dot"></span> <span class="badge-text">EXT</span>
+        </button>
+        <button id="fullscreen-badge" class="badge-indicator inactive" title="Toggle Fullscreen">
+          <span class="badge-text">FULLSCREEN</span>
+        </button>
       </div>
 
       <!-- Quick Action Controls -->
@@ -101,77 +126,198 @@
       </div>
     </header>
 
-    <!-- Program & Preview Tally Monitors -->
-    <div class="tallies-bar">
-      <!-- Program Display -->
-      <div class="tally-box program-box">
-        <div class="tally-tag">PROGRAM / LIVE (MAIN OUTPUT)</div>
-        <div class="tally-content">
-          <span class="tally-num" id="pgm-number">--</span>
-          <span class="tally-name" id="pgm-name">No Active Input</span>
-        </div>
-      </div>
-
-      <!-- Transition Center -->
-      <div class="transition-center">
-        <div class="transition-control-row">
-          <button id="btn-cut" class="btn btn-action btn-cut" title="Instant Cut">
-            CUT
-          </button>
-          <button id="btn-auto" class="btn btn-action btn-auto" title="Execute Default Transition">
-            <span id="btn-auto-label">AUTO</span>
-          </button>
-        </div>
-        <div class="transition-sub-row">
-          <button id="btn-ftb" class="btn btn-ftb" title="Fade to Black">FTB</button>
-          <div class="trans-select-wrapper">
-            <select id="quick-transition-select" title="Active Default Transition">
-              <option value="Fade">Fade</option>
-              <option value="Cut">Cut</option>
-              <option value="Zoom">Zoom</option>
-              <option value="Wipe">Wipe</option>
-              <option value="Slide">Slide</option>
-              <option value="Fly">Fly</option>
-              <option value="CrossZoom">CrossZoom</option>
-              <option value="Transition1">Trans 1</option>
-              <option value="Transition2">Trans 2</option>
-            </select>
+    <!-- ==================== VIEW 1: VIDEO SWITCHER ==================== -->
+    <div id="view-switcher" class="view-panel">
+      <!-- Program & Preview Live Visual Monitors Bar -->
+      <div class="tallies-bar">
+        <!-- Program Display with Live Video Screen -->
+        <div class="tally-box program-box">
+          <div class="tally-tag">
+            <span class="live-dot-pulse"></span>
+            <span>PROGRAM / LIVE (MAIN OUTPUT)</span>
           </div>
-          <button id="btn-quickplay" class="btn btn-quickplay" title="QuickPlay">QuickPlay</button>
+          <div class="monitor-screen-wrapper">
+            <img id="pgm-monitor-img" class="monitor-screen-img" alt="Live Program Screen" />
+            <div class="monitor-overlay-info">
+              <span class="tally-num" id="pgm-number">--</span>
+              <span class="tally-name" id="pgm-name">No Active Input</span>
+              <span class="on-air-pill">LIVE</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Transition Center & Mode Toggle -->
+        <div class="transition-center">
+          <!-- Switching Method Toggle -->
+          <div class="method-toggle-container">
+            <button type="button" id="method-direct-btn" class="method-pill-btn active" title="Instant Direct Switching">
+              ⚡ Direct Switch
+            </button>
+            <button type="button" id="method-preview-btn" class="method-pill-btn" title="Traditional Preview + Take Switching">
+              🎬 Preview + Take
+            </button>
+          </div>
+
+          <div class="transition-control-row">
+            <button id="btn-cut" class="btn btn-action btn-cut" title="Instant Cut">
+              CUT
+            </button>
+            <button id="btn-auto" class="btn btn-action btn-auto" title="Execute Default Transition">
+              <span id="btn-auto-label">AUTO</span>
+            </button>
+          </div>
+          <div class="transition-sub-row">
+            <button id="btn-ftb" class="btn btn-ftb" title="Fade to Black">FTB</button>
+            <div class="trans-select-wrapper">
+              <select id="quick-transition-select" title="Active Default Transition">
+                <option value="Fade">Fade</option>
+                <option value="Cut">Cut</option>
+                <option value="Zoom">Zoom</option>
+                <option value="Wipe">Wipe</option>
+                <option value="Slide">Slide</option>
+                <option value="Fly">Fly</option>
+                <option value="CrossZoom">CrossZoom</option>
+                <option value="Transition1">Trans 1</option>
+                <option value="Transition2">Trans 2</option>
+              </select>
+            </div>
+            <button id="btn-quickplay" class="btn btn-quickplay" title="QuickPlay">QuickPlay</button>
+          </div>
+        </div>
+
+        <!-- Preview Display with Live Video Screen -->
+        <div class="tally-box preview-box">
+          <div class="tally-tag">
+            <span class="preview-dot-indicator"></span>
+            <span>PREVIEW (NEXT)</span>
+          </div>
+          <div class="monitor-screen-wrapper">
+            <img id="prv-monitor-img" class="monitor-screen-img" alt="Live Preview Screen" />
+            <div class="monitor-overlay-info">
+              <span class="tally-num" id="prv-number">--</span>
+              <span class="tally-name" id="prv-name">No Preview Input</span>
+              <span class="next-pill">NEXT</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- Preview Display -->
-      <div class="tally-box preview-box">
-        <div class="tally-tag">PREVIEW (NEXT)</div>
-        <div class="tally-content">
-          <span class="tally-num" id="prv-number">--</span>
-          <span class="tally-name" id="prv-name">No Preview Input</span>
+      <!-- Mode Banner & Info -->
+      <div class="mode-info-strip">
+        <div class="info-left">
+          <span class="mode-badge" id="current-mode-badge">Direct Switch Mode</span>
+          <span class="mode-desc" id="current-mode-desc">Tapping a source transitions it directly to the Main Output.</span>
+        </div>
+        <div class="info-right">
+          <span id="source-filter-status" class="filter-indicator">Showing all sources</span>
+        </div>
+      </div>
+
+      <!-- Main Switcher Buttons Grid -->
+      <main class="switcher-viewport">
+        <div id="sources-grid" class="sources-grid">
+          <div class="loading-placeholder">
+            <div class="spinner"></div>
+            <p>Connecting to vMix and loading sources...</p>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- ==================== VIEW 2: MIC & AUDIO SWITCHER ==================== -->
+    <div id="view-audio" class="view-panel hidden">
+      <div class="audio-control-header">
+        <div class="audio-header-left">
+          <div class="audio-header-title-group">
+            <h3>🎤 Microphone &amp; Audio Console</h3>
+            <span class="audio-active-count-pill" id="audio-live-count">0 Live Mics</span>
+          </div>
+          <p class="audio-header-desc">Instant mute/unmute switching, volume faders, and signal peak meters for all audio inputs</p>
+        </div>
+        <div class="audio-header-actions">
+          <button id="audio-mute-all-btn" class="btn btn-secondary btn-sm" title="Mute all audio inputs">
+            Mute All Mics
+          </button>
+          <button id="audio-live-all-btn" class="btn btn-primary btn-sm" title="Unmute all audio inputs">
+            Unmute All
+          </button>
+        </div>
+      </div>
+      <div class="audio-viewport">
+        <div id="audio-channels-grid" class="audio-channels-grid">
+          <!-- Audio Channel Faders and Mute toggles generated dynamically -->
         </div>
       </div>
     </div>
 
-    <!-- Mode Banner & Info -->
-    <div class="mode-info-strip">
-      <div class="info-left">
-        <span class="mode-badge" id="current-mode-badge">Direct Switch Mode</span>
-        <span class="mode-desc" id="current-mode-desc">Tapping a source transitions it directly to the Main Output.</span>
-      </div>
-      <div class="info-right">
-        <span id="source-filter-status" class="filter-indicator">Showing all sources</span>
-      </div>
-    </div>
-
-    <!-- Main Switcher Buttons Grid -->
-    <main class="switcher-viewport">
-      <div id="sources-grid" class="sources-grid">
-        <!-- Buttons generated dynamically via app.js -->
-        <div class="loading-placeholder">
-          <div class="spinner"></div>
-          <p>Connecting to vMix and loading sources...</p>
+    <!-- ==================== VIEW 3: BIG SCREEN PREVIEW (MULTIVIEWER) ==================== -->
+    <div id="view-multiview" class="view-panel hidden">
+      <div class="multiview-header">
+        <div class="multiview-clock-card">
+          <span class="mv-card-label">PRODUCTION CLOCK</span>
+          <span id="multiview-clock" class="mv-card-val">00:00:00</span>
+        </div>
+        <div class="multiview-status-center">
+          <div class="mv-banner-chip pgm">
+            <span class="live-dot-pulse"></span>
+            <span>PROGRAM: <strong id="mv-pgm-title">None</strong></span>
+          </div>
+          <div class="mv-banner-chip prv">
+            <span class="preview-dot-indicator"></span>
+            <span>PREVIEW: <strong id="mv-prv-title">None</strong></span>
+          </div>
+        </div>
+        <div class="multiview-actions">
+          <button id="mv-fullscreen-toggle-btn" class="btn btn-secondary btn-sm">
+            ⛶ Fullscreen Display
+          </button>
         </div>
       </div>
-    </main>
+
+      <!-- Giant Twin Program & Preview Screens -->
+      <div class="multiview-twin-screens">
+        <div class="big-monitor-box program">
+          <div class="big-monitor-header">
+            <span class="live-dot-pulse"></span>
+            <span>PROGRAM / LIVE</span>
+          </div>
+          <div class="big-monitor-canvas">
+            <img id="mv-pgm-img" class="big-monitor-img" alt="Program Output" />
+            <div class="big-monitor-footer pgm">
+              <span id="mv-pgm-num" class="big-monitor-num">--</span>
+              <span id="mv-pgm-name" class="big-monitor-name">No Active Program</span>
+              <span class="big-monitor-pill pgm">ON AIR</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="big-monitor-box preview">
+          <div class="big-monitor-header">
+            <span class="preview-dot-indicator"></span>
+            <span>PREVIEW (NEXT)</span>
+          </div>
+          <div class="big-monitor-canvas">
+            <img id="mv-prv-img" class="big-monitor-img" alt="Preview Output" />
+            <div class="big-monitor-footer prv">
+              <span id="mv-prv-num" class="big-monitor-num">--</span>
+              <span id="mv-prv-name" class="big-monitor-name">No Preview</span>
+              <span class="big-monitor-pill prv">NEXT</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Multiviewer Multi-Camera Grid -->
+      <div class="multiview-cams-wrapper">
+        <div class="multiview-cams-header">
+          <span class="section-title">MULTIVIEW SOURCES (TAP TO SWITCH)</span>
+          <span class="section-sub">Tap any camera to transition or stage in preview</span>
+        </div>
+        <div id="multiview-cams-grid" class="multiview-cams-grid">
+          <!-- Multiviewer tiles generated dynamically -->
+        </div>
+      </div>
+    </div>
 
     <!-- Bottom Status Bar -->
     <footer class="bottom-bar">

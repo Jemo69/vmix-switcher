@@ -222,11 +222,12 @@ class VMixClient:
             full_state.get("recording"),
             full_state.get("streaming"),
             full_state.get("fullscreen"),
+            full_state.get("external"),
             full_state.get("defaultTransition"),
             full_state.get("transitionDuration"),
             full_state.get("switcherMode"),
             len(visible_inputs),
-            tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("customTitle"), i.get("isIgnored")) for i in all_inputs)
+            tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("volume"), i.get("customTitle"), i.get("isIgnored")) for i in all_inputs)
         )
 
         now = time.time()
@@ -320,60 +321,186 @@ class VMixClient:
 
     async def get_thumbnail(self, input_id: int | str) -> tuple[bytes, str]:
         """Fetches JPEG thumbnail from vMix or generates clean SVG thumbnail for mock inputs."""
+        str_id = str(input_id).lower()
+        if str_id in ("active", "program", "pgm", "0"):
+            target_id = self.last_state.get("active", 1) if self.last_state else 1
+        elif str_id in ("preview", "prv"):
+            target_id = self.last_state.get("preview", 2) if self.last_state else 2
+        else:
+            target_id = input_id
+
         now = time.time()
-        cache_key = str(input_id)
+        cache_key = str(target_id)
         if cache_key in self._thumb_cache:
             ts, data, mime = self._thumb_cache[cache_key]
-            if now - ts < 1.0:  # 1s cache
+            if now - ts < 0.8:
                 return data, mime
 
         cfg = config_manager.get()
         if cfg.get("mockMode", False) or not self.connected:
-            # Generate SVG placeholder
-            svg = self._generate_mock_svg(str(input_id))
+            svg = self._generate_mock_svg(str(target_id))
             data = svg.encode("utf-8")
             self._thumb_cache[cache_key] = (now, data, "image/svg+xml")
             return data, "image/svg+xml"
 
         host = cfg.get("vmixHost", "127.0.0.1")
         port = cfg.get("vmixPort", 8088)
-        # vMix Thumbnail URL: Thumbnail.aspx?Input=X
-        param_name = "Key" if "-" in str(input_id) else "Input"
-        url = f"http://{host}:{port}/Thumbnail.aspx?{param_name}={urllib.parse.quote(str(input_id))}"
+        param_name = "Key" if "-" in str(target_id) else "Input"
+        url = f"http://{host}:{port}/Thumbnail.aspx?{param_name}={urllib.parse.quote(str(target_id))}"
 
         try:
             raw_bytes = await asyncio.to_thread(self._fetch_binary, url, 1.5)
             self._thumb_cache[cache_key] = (now, raw_bytes, "image/jpeg")
             return raw_bytes, "image/jpeg"
         except Exception:
-            # Fallback to SVG
-            svg = self._generate_mock_svg(str(input_id))
+            svg = self._generate_mock_svg(str(target_id))
             data = svg.encode("utf-8")
             return data, "image/svg+xml"
 
     def _generate_mock_svg(self, input_id: str) -> str:
-        # Find input title if available
         title = f"Input {input_id}"
         inp_type = "Source"
+        is_active = False
+        is_preview = False
         if self.last_state:
             for inp in self.last_state.get("allInputs", []):
                 if str(inp.get("number")) == input_id or str(inp.get("key")) == input_id:
                     title = inp.get("customTitle") or inp.get("shortTitle") or inp.get("title") or title
                     inp_type = inp.get("type", "Source")
+                    is_active = bool(inp.get("isActive"))
+                    is_preview = bool(inp.get("isPreview"))
                     break
+
+        # Tally border styling
+        border_stroke = "#334155"
+        tally_text = "STANDBY"
+        tally_bg = "#1e293b"
+        if is_active:
+            border_stroke = "#ef4444"
+            tally_text = "PROGRAM / LIVE"
+            tally_bg = "#dc2626"
+        elif is_preview:
+            border_stroke = "#10b981"
+            tally_text = "PREVIEW"
+            tally_bg = "#059669"
+
+        type_lower = inp_type.lower()
+        title_lower = title.lower()
+
+        # 1. Color Bars / Test Pattern
+        if "colour" in type_lower or "color" in title_lower or "bars" in title_lower or "pattern" in title_lower:
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+  <rect x="0" y="0" width="45.7" height="135" fill="#c0c0c0"/>
+  <rect x="45.7" y="0" width="45.7" height="135" fill="#c0c000"/>
+  <rect x="91.4" y="0" width="45.7" height="135" fill="#00c0c0"/>
+  <rect x="137.1" y="0" width="45.7" height="135" fill="#00c000"/>
+  <rect x="182.8" y="0" width="45.7" height="135" fill="#c000c0"/>
+  <rect x="228.5" y="0" width="45.7" height="135" fill="#c00000"/>
+  <rect x="274.2" y="0" width="45.8" height="135" fill="#0000c0"/>
+  <rect x="0" y="135" width="64" height="45" fill="#0000c0"/>
+  <rect x="64" y="135" width="64" height="45" fill="#ffffff"/>
+  <rect x="128" y="135" width="64" height="45" fill="#c000c0"/>
+  <rect x="192" y="135" width="64" height="45" fill="#1e1e1e"/>
+  <rect x="256" y="135" width="64" height="45" fill="#000000"/>
+  <rect x="0" y="0" width="320" height="180" fill="none" stroke="{border_stroke}" stroke-width="6"/>
+  <rect x="10" y="10" width="55" height="24" rx="4" fill="{tally_bg}"/>
+  <text x="37" y="27" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">IN {input_id}</text>
+  <rect x="10" y="146" width="300" height="24" rx="4" fill="rgba(0,0,0,0.7)"/>
+  <text x="160" y="163" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#f8fafc" text-anchor="middle">{title[:28]}</text>
+</svg>'''
+
+        # 2. Microphone / Audio
+        if "audio" in type_lower or "mic" in title_lower:
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+  <rect width="320" height="180" fill="#0b1329"/>
+  <!-- Audio spectrum waves -->
+  <path d="M 20 90 Q 40 40 60 90 T 100 90 T 140 30 T 180 90 T 220 50 T 260 90 T 300 90" fill="none" stroke="#38bdf8" stroke-width="3" opacity="0.6"/>
+  <path d="M 20 90 Q 50 130 80 90 T 140 150 T 200 90 T 260 130 T 300 90" fill="none" stroke="#818cf8" stroke-width="2" opacity="0.4"/>
+  <!-- Mic icon -->
+  <circle cx="160" cy="70" r="28" fill="#1e293b"/>
+  <path d="M154 58a6 6 0 0 1 12 0v14a6 6 0 0 1-12 0V58zm-4 10a10 10 0 0 0 20 0h2a12 12 0 0 1-11 11.9v4.1h4v2h-10v-2h4v-4.1A12 12 0 0 1 148 68h2z" fill="#38bdf8"/>
+  <rect x="0" y="0" width="320" height="180" fill="none" stroke="{border_stroke}" stroke-width="6"/>
+  <rect x="10" y="10" width="55" height="24" rx="4" fill="{tally_bg}"/>
+  <text x="37" y="27" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">IN {input_id}</text>
+  <rect x="10" y="146" width="300" height="24" rx="4" fill="rgba(0,0,0,0.7)"/>
+  <text x="160" y="163" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#38bdf8" text-anchor="middle">{title[:28]} (AUDIO)</text>
+</svg>'''
+
+        # 3. Screen Share / PPT / Desktop
+        if "desktop" in type_lower or "ppt" in title_lower or "screen" in title_lower:
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+  <rect width="320" height="180" fill="#0f172a"/>
+  <!-- Presentation slide mockup -->
+  <rect x="40" y="30" width="240" height="120" rx="6" fill="#1e293b" stroke="#334155" stroke-width="2"/>
+  <rect x="55" y="45" width="90" height="12" rx="3" fill="#38bdf8"/>
+  <rect x="55" y="65" width="130" height="6" rx="2" fill="#64748b"/>
+  <rect x="55" y="77" width="110" height="6" rx="2" fill="#64748b"/>
+  <rect x="55" y="89" width="120" height="6" rx="2" fill="#64748b"/>
+  <!-- Mini chart -->
+  <rect x="195" y="80" width="12" height="40" rx="2" fill="#10b981"/>
+  <rect x="213" y="60" width="12" height="60" rx="2" fill="#3b82f6"/>
+  <rect x="231" y="45" width="12" height="75" rx="2" fill="#f59e0b"/>
+  <rect x="249" y="70" width="12" height="50" rx="2" fill="#8b5cf6"/>
+  <rect x="0" y="0" width="320" height="180" fill="none" stroke="{border_stroke}" stroke-width="6"/>
+  <rect x="10" y="10" width="55" height="24" rx="4" fill="{tally_bg}"/>
+  <text x="37" y="27" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">IN {input_id}</text>
+  <rect x="10" y="146" width="300" height="24" rx="4" fill="rgba(0,0,0,0.7)"/>
+  <text x="160" y="163" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#f8fafc" text-anchor="middle">{title[:28]}</text>
+</svg>'''
+
+        # 4. Video Clip
+        if "video" in type_lower or "clip" in title_lower or "intro" in title_lower:
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+  <defs>
+    <linearGradient id="vidbg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+  </defs>
+  <rect width="320" height="180" fill="url(#vidbg)"/>
+  <circle cx="160" cy="80" r="26" fill="rgba(255,255,255,0.15)"/>
+  <polygon points="152,66 174,80 152,94" fill="#ffffff"/>
+  <!-- Progress bar -->
+  <rect x="30" y="130" width="260" height="4" rx="2" fill="#334155"/>
+  <rect x="30" y="130" width="110" height="4" rx="2" fill="#a855f7"/>
+  <rect x="0" y="0" width="320" height="180" fill="none" stroke="{border_stroke}" stroke-width="6"/>
+  <rect x="10" y="10" width="55" height="24" rx="4" fill="{tally_bg}"/>
+  <text x="37" y="27" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">IN {input_id}</text>
+  <rect x="10" y="146" width="300" height="24" rx="4" fill="rgba(0,0,0,0.7)"/>
+  <text x="160" y="163" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#f8fafc" text-anchor="middle">{title[:28]}</text>
+</svg>'''
+
+        # 5. Studio Camera (Default)
+        cam_colors = ["#1e293b", "#0f172a", "#172554", "#14532d", "#312e81"]
+        bg_c = cam_colors[int(input_id) % len(cam_colors)] if str(input_id).isdigit() else "#0f172a"
 
         return f'''<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#182238" />
-      <stop offset="100%" stop-color="#0b1120" />
-    </linearGradient>
+    <radialGradient id="camlight{input_id}" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="{bg_c}" stop-opacity="1"/>
+    </radialGradient>
   </defs>
-  <rect width="320" height="180" fill="url(#bg)"/>
-  <circle cx="160" cy="75" r="32" fill="#2563eb" fill-opacity="0.2"/>
-  <text x="160" y="83" font-family="-apple-system, sans-serif" font-size="28" font-weight="bold" fill="#60a5fa" text-anchor="middle">{input_id}</text>
-  <text x="160" y="125" font-family="-apple-system, sans-serif" font-size="14" font-weight="600" fill="#e2e8f0" text-anchor="middle">{title[:28]}</text>
-  <text x="160" y="145" font-family="-apple-system, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">{inp_type}</text>
+  <rect width="320" height="180" fill="url(#camlight{input_id})"/>
+  <!-- Viewfinder reticle -->
+  <path d="M 25 35 L 25 25 L 35 25 M 295 25 L 305 25 L 305 35 M 25 125 L 25 135 L 35 135 M 295 135 L 305 135 L 305 125" stroke="#94a3b8" stroke-width="2" fill="none" opacity="0.6"/>
+  <!-- Center crosshair -->
+  <line x1="150" y1="80" x2="170" y2="80" stroke="#94a3b8" stroke-width="1.5" opacity="0.4"/>
+  <line x1="160" y1="70" x2="160" y2="90" stroke="#94a3b8" stroke-width="1.5" opacity="0.4"/>
+  <!-- Camera icon & number -->
+  <circle cx="160" cy="78" r="28" fill="#1e293b" stroke="#334155" stroke-width="2"/>
+  <text x="160" y="87" font-family="-apple-system, sans-serif" font-size="24" font-weight="900" fill="#f8fafc" text-anchor="middle">C{input_id}</text>
+  <!-- Frame & Tally -->
+  <rect x="0" y="0" width="320" height="180" fill="none" stroke="{border_stroke}" stroke-width="6"/>
+  <rect x="10" y="10" width="55" height="24" rx="4" fill="{tally_bg}"/>
+  <text x="37" y="27" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">IN {input_id}</text>
+  <!-- Top Right 1080p Badge -->
+  <rect x="240" y="10" width="70" height="20" rx="3" fill="rgba(0,0,0,0.6)"/>
+  <text x="275" y="24" font-family="-apple-system, sans-serif" font-size="10" font-weight="bold" fill="#38bdf8" text-anchor="middle">1080p60</text>
+  <!-- Bottom info bar -->
+  <rect x="10" y="146" width="300" height="24" rx="4" fill="rgba(0,0,0,0.75)"/>
+  <text x="160" y="163" font-family="-apple-system, sans-serif" font-size="13" font-weight="bold" fill="#ffffff" text-anchor="middle">{title[:28]}</text>
 </svg>'''
 
 vmix_client = VMixClient()
+

@@ -8,9 +8,12 @@ class SwitcherApp {
     this.currentConfig = null;
     this.sourceSearchFilter = '';
     this.soundEnabled = true;
-    this.showThumbnails = localStorage.getItem('vmix_show_thumbnails') === 'true';
+    this.showThumbnails = localStorage.getItem('vmix_show_thumbnails') !== 'false';
     this.audioCtx = null;
     this.pingTimer = null;
+    this.currentView = 'switcher';
+    this.clockTimer = null;
+    this.recordingStartTime = null;
 
     // Cache DOM Elements
     this.dom = {
@@ -24,8 +27,24 @@ class SwitcherApp {
       vmixStatusBadge: document.getElementById('vmix-status-badge'),
       vmixStatusText: document.getElementById('vmix-status-text'),
       recBadge: document.getElementById('rec-badge'),
+      recTimer: document.getElementById('rec-timer'),
       streamBadge: document.getElementById('stream-badge'),
+      externalBadge: document.getElementById('external-badge'),
       fullscreenBadge: document.getElementById('fullscreen-badge'),
+
+      // App Mode Tabs & View Panels
+      tabSwitcher: document.getElementById('tab-switcher'),
+      tabAudio: document.getElementById('tab-audio'),
+      tabMultiview: document.getElementById('tab-multiview'),
+      viewSwitcher: document.getElementById('view-switcher'),
+      viewAudio: document.getElementById('view-audio'),
+      viewMultiview: document.getElementById('view-multiview'),
+
+      // Live Video Monitors & Method Switcher
+      pgmMonitorImg: document.getElementById('pgm-monitor-img'),
+      prvMonitorImg: document.getElementById('prv-monitor-img'),
+      methodDirectBtn: document.getElementById('method-direct-btn'),
+      methodPreviewBtn: document.getElementById('method-preview-btn'),
 
       soundToggleBtn: document.getElementById('sound-toggle-btn'),
       soundIconOn: document.getElementById('sound-icon-on'),
@@ -49,6 +68,25 @@ class SwitcherApp {
       sourceFilterStatus: document.getElementById('source-filter-status'),
       currentModeBadge: document.getElementById('current-mode-badge'),
       currentModeDesc: document.getElementById('current-mode-desc'),
+
+      // Audio Console
+      audioChannelsGrid: document.getElementById('audio-channels-grid'),
+      audioLiveCount: document.getElementById('audio-live-count'),
+      audioMuteAllBtn: document.getElementById('audio-mute-all-btn'),
+      audioLiveAllBtn: document.getElementById('audio-live-all-btn'),
+
+      // Big Screen Multiviewer
+      multiviewClock: document.getElementById('multiview-clock'),
+      mvPgmTitle: document.getElementById('mv-pgm-title'),
+      mvPrvTitle: document.getElementById('mv-prv-title'),
+      mvPgmImg: document.getElementById('mv-pgm-img'),
+      mvPrvImg: document.getElementById('mv-prv-img'),
+      mvPgmNum: document.getElementById('mv-pgm-num'),
+      mvPgmName: document.getElementById('mv-pgm-name'),
+      mvPrvNum: document.getElementById('mv-prv-num'),
+      mvPrvName: document.getElementById('mv-prv-name'),
+      multiviewCamsGrid: document.getElementById('multiview-cams-grid'),
+      mvFullscreenToggleBtn: document.getElementById('mv-fullscreen-toggle-btn'),
 
       manageSourcesBtn: document.getElementById('manage-sources-btn'),
       manageSourcesModal: document.getElementById('manage-sources-modal'),
@@ -84,6 +122,7 @@ class SwitcherApp {
 
   async init() {
     this.bindEvents();
+    this.startClock();
 
     // Check if we are already logged in
     const isAuthed = await API.checkAuth();
@@ -96,6 +135,77 @@ class SwitcherApp {
   }
 
   bindEvents() {
+    // App Mode Navigation Tabs
+    if (this.dom.tabSwitcher) {
+      this.dom.tabSwitcher.addEventListener('click', () => this.switchView('switcher'));
+    }
+    if (this.dom.tabAudio) {
+      this.dom.tabAudio.addEventListener('click', () => this.switchView('audio'));
+    }
+    if (this.dom.tabMultiview) {
+      this.dom.tabMultiview.addEventListener('click', () => this.switchView('multiview'));
+    }
+
+    // Direct vs Preview + Take Switching Method Pills
+    if (this.dom.methodDirectBtn) {
+      this.dom.methodDirectBtn.addEventListener('click', () => this.setSwitcherMode('direct'));
+    }
+    if (this.dom.methodPreviewBtn) {
+      this.dom.methodPreviewBtn.addEventListener('click', () => this.setSwitcherMode('preview_take'));
+    }
+
+    // Interactive Broadcast Controls (REC, STREAM, EXTERNAL, FULLSCREEN)
+    if (this.dom.recBadge) {
+      this.dom.recBadge.addEventListener('click', async () => {
+        this.vibrate();
+        this.playTone(500, 0.05);
+        try {
+          await API.toggleRecording();
+        } catch (err) {
+          console.error('Failed to toggle recording', err);
+        }
+      });
+    }
+
+    if (this.dom.streamBadge) {
+      this.dom.streamBadge.addEventListener('click', async () => {
+        this.vibrate();
+        this.playTone(600, 0.05);
+        try {
+          await API.toggleStreaming();
+        } catch (err) {
+          console.error('Failed to toggle streaming', err);
+        }
+      });
+    }
+
+    if (this.dom.externalBadge) {
+      this.dom.externalBadge.addEventListener('click', async () => {
+        this.vibrate();
+        this.playTone(700, 0.05);
+        try {
+          await API.toggleExternal();
+        } catch (err) {
+          console.error('Failed to toggle external output', err);
+        }
+      });
+    }
+
+    if (this.dom.fullscreenBadge) {
+      this.dom.fullscreenBadge.addEventListener('click', () => this.toggleFullscreen());
+    }
+    if (this.dom.mvFullscreenToggleBtn) {
+      this.dom.mvFullscreenToggleBtn.addEventListener('click', () => this.toggleFullscreen());
+    }
+
+    // Audio Master Actions
+    if (this.dom.audioMuteAllBtn) {
+      this.dom.audioMuteAllBtn.addEventListener('click', () => this.muteAllAudio());
+    }
+    if (this.dom.audioLiveAllBtn) {
+      this.dom.audioLiveAllBtn.addEventListener('click', () => this.unmuteAllAudio());
+    }
+
     // Thumbnail toggle button
     if (this.dom.thumbToggleBtn) {
       this.dom.thumbToggleBtn.classList.toggle('active', this.showThumbnails);
@@ -300,7 +410,15 @@ class SwitcherApp {
   }
 
   updateModeUI(mode) {
-    if (mode === 'preview_take') {
+    const isPreviewTake = mode === 'preview_take';
+    if (this.dom.methodDirectBtn) {
+      this.dom.methodDirectBtn.classList.toggle('active', !isPreviewTake);
+    }
+    if (this.dom.methodPreviewBtn) {
+      this.dom.methodPreviewBtn.classList.toggle('active', isPreviewTake);
+    }
+
+    if (isPreviewTake) {
       this.dom.currentModeBadge.textContent = 'Preview + Take Mode';
       this.dom.currentModeBadge.style.backgroundColor = 'rgba(16, 185, 129, 0.2)';
       this.dom.currentModeBadge.style.color = '#6ee7b7';
@@ -311,6 +429,74 @@ class SwitcherApp {
       this.dom.currentModeBadge.style.color = '#93c5fd';
       this.dom.currentModeDesc.textContent = 'Tapping a source transitions it directly to the Main Output.';
     }
+  }
+
+  async setSwitcherMode(mode) {
+    if (this.currentConfig) {
+      this.currentConfig.switcherMode = mode;
+    }
+    this.updateModeUI(mode);
+    if (this.dom.settingSwitcherMode) {
+      this.dom.settingSwitcherMode.value = mode;
+    }
+    try {
+      await API.saveConfig({ switcherMode: mode });
+    } catch (err) {
+      console.error('Failed to update switcher mode', err);
+    }
+  }
+
+  switchView(view) {
+    this.currentView = view;
+    if (this.dom.tabSwitcher) this.dom.tabSwitcher.classList.toggle('active', view === 'switcher');
+    if (this.dom.tabAudio) this.dom.tabAudio.classList.toggle('active', view === 'audio');
+    if (this.dom.tabMultiview) this.dom.tabMultiview.classList.toggle('active', view === 'multiview');
+
+    if (this.dom.viewSwitcher) this.dom.viewSwitcher.classList.toggle('hidden', view !== 'switcher');
+    if (this.dom.viewAudio) this.dom.viewAudio.classList.toggle('hidden', view !== 'audio');
+    if (this.dom.viewMultiview) this.dom.viewMultiview.classList.toggle('hidden', view !== 'multiview');
+
+    if (this.currentState) {
+      if (view === 'audio') {
+        this.renderAudioMixer(this.currentState.allInputs || []);
+      } else if (view === 'multiview') {
+        this.renderMultiviewGrid(this.currentState.visibleInputs || []);
+      } else {
+        this.renderSourcesGrid(this.currentState.visibleInputs || []);
+      }
+    }
+  }
+
+  toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+  }
+
+  startClock() {
+    if (this.clockTimer) clearInterval(this.clockTimer);
+    this.clockTimer = setInterval(() => {
+      // Production clock
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0];
+      if (this.dom.multiviewClock) {
+        this.dom.multiviewClock.textContent = timeStr;
+      }
+
+      // Recording elapsed timer
+      if (this.recordingStartTime && this.dom.recTimer) {
+        const elapsedSec = Math.floor((Date.now() - this.recordingStartTime) / 1000);
+        const hrs = Math.floor(elapsedSec / 3600);
+        const mins = Math.floor((elapsedSec % 3600) / 60);
+        const secs = elapsedSec % 60;
+        const pad = (n) => String(n).padStart(2, '0');
+        this.dom.recTimer.textContent = hrs > 0 ? `${hrs}:${pad(mins)}:${pad(secs)}` : `${pad(mins)}:${pad(secs)}`;
+      }
+    }, 500);
   }
 
   // Real-time WebSocket connection
@@ -381,14 +567,37 @@ class SwitcherApp {
     if (!this.showThumbnails) return;
     this.thumbTimer = setInterval(() => {
       if (!this.showThumbnails || this.dom.appContainer.classList.contains('hidden')) return;
-      const imgs = this.dom.sourcesGrid.querySelectorAll('.source-thumb-img');
       const now = Date.now();
+
+      // Refresh Switcher Grid cards
+      const imgs = this.dom.sourcesGrid.querySelectorAll('.source-thumb-img');
       imgs.forEach(img => {
         const inputNum = img.getAttribute('data-thumb-input');
         if (inputNum) {
           img.src = `${API.getThumbnailUrl(inputNum)}&_t=${now}`;
         }
       });
+
+      // Refresh Live Monitors (Program & Preview)
+      if (this.currentState) {
+        const activeNum = this.currentState.active || 'active';
+        const previewNum = this.currentState.preview || 'preview';
+        if (this.dom.pgmMonitorImg) this.dom.pgmMonitorImg.src = `${API.getThumbnailUrl(activeNum)}&_t=${now}`;
+        if (this.dom.prvMonitorImg) this.dom.prvMonitorImg.src = `${API.getThumbnailUrl(previewNum)}&_t=${now}`;
+        if (this.dom.mvPgmImg) this.dom.mvPgmImg.src = `${API.getThumbnailUrl(activeNum)}&_t=${now}`;
+        if (this.dom.mvPrvImg) this.dom.mvPrvImg.src = `${API.getThumbnailUrl(previewNum)}&_t=${now}`;
+      }
+
+      // Refresh Multiviewer Camera grid thumbnails
+      if (this.dom.multiviewCamsGrid) {
+        const mvImgs = this.dom.multiviewCamsGrid.querySelectorAll('.mv-cam-img');
+        mvImgs.forEach(img => {
+          const inputNum = img.getAttribute('data-thumb-input');
+          if (inputNum) {
+            img.src = `${API.getThumbnailUrl(inputNum)}&_t=${now}`;
+          }
+        });
+      }
     }, 2000);
   }
 
@@ -424,7 +633,19 @@ class SwitcherApp {
 
     // Broadcast Badges
     this.dom.recBadge.className = `badge-indicator ${state.recording ? 'active rec' : 'inactive'}`;
+    if (state.recording) {
+      if (!this.recordingStartTime) {
+        this.recordingStartTime = Date.now();
+      }
+    } else {
+      this.recordingStartTime = null;
+      if (this.dom.recTimer) this.dom.recTimer.textContent = '';
+    }
+
     this.dom.streamBadge.className = `badge-indicator ${state.streaming ? 'active stream' : 'inactive'}`;
+    if (this.dom.externalBadge) {
+      this.dom.externalBadge.className = `badge-indicator ${state.external ? 'active external' : 'inactive'}`;
+    }
     this.dom.fullscreenBadge.className = `badge-indicator ${state.fullscreen ? 'active fullscreen' : 'inactive'}`;
 
     // FTB Button active indicator
@@ -437,22 +658,34 @@ class SwitcherApp {
     // Active (Program) & Preview monitors
     const activeInput = state.allInputs?.find(i => i.isActive);
     const previewInput = state.allInputs?.find(i => i.isPreview);
+    const activeNum = activeInput ? activeInput.number : (state.active || 'active');
+    const previewNum = previewInput ? previewInput.number : (state.preview || 'preview');
+    const activeTitle = activeInput ? (activeInput.customTitle || activeInput.shortTitle || activeInput.title) : 'None';
+    const previewTitle = previewInput ? (previewInput.customTitle || previewInput.shortTitle || previewInput.title) : 'None';
 
-    if (activeInput) {
-      this.dom.pgmNumber.textContent = activeInput.number;
-      this.dom.pgmName.textContent = activeInput.customTitle || activeInput.shortTitle || activeInput.title;
-    } else {
-      this.dom.pgmNumber.textContent = state.active || '--';
-      this.dom.pgmName.textContent = 'None';
+    this.dom.pgmNumber.textContent = activeNum || '--';
+    this.dom.pgmName.textContent = activeTitle;
+    this.dom.prvNumber.textContent = previewNum || '--';
+    this.dom.prvName.textContent = previewTitle;
+
+    // Update Live Monitor Images
+    const now = Date.now();
+    if (this.dom.pgmMonitorImg) {
+      this.dom.pgmMonitorImg.src = `${API.getThumbnailUrl(activeNum)}&_t=${now}`;
+    }
+    if (this.dom.prvMonitorImg) {
+      this.dom.prvMonitorImg.src = `${API.getThumbnailUrl(previewNum)}&_t=${now}`;
     }
 
-    if (previewInput) {
-      this.dom.prvNumber.textContent = previewInput.number;
-      this.dom.prvName.textContent = previewInput.customTitle || previewInput.shortTitle || previewInput.title;
-    } else {
-      this.dom.prvNumber.textContent = state.preview || '--';
-      this.dom.prvName.textContent = 'None';
-    }
+    // Update Multiviewer Big Screens
+    if (this.dom.mvPgmImg) this.dom.mvPgmImg.src = `${API.getThumbnailUrl(activeNum)}&_t=${now}`;
+    if (this.dom.mvPrvImg) this.dom.mvPrvImg.src = `${API.getThumbnailUrl(previewNum)}&_t=${now}`;
+    if (this.dom.mvPgmTitle) this.dom.mvPgmTitle.textContent = activeTitle;
+    if (this.dom.mvPrvTitle) this.dom.mvPrvTitle.textContent = previewTitle;
+    if (this.dom.mvPgmNum) this.dom.mvPgmNum.textContent = activeNum || '--';
+    if (this.dom.mvPgmName) this.dom.mvPgmName.textContent = activeTitle;
+    if (this.dom.mvPrvNum) this.dom.mvPrvNum.textContent = previewNum || '--';
+    if (this.dom.mvPrvName) this.dom.mvPrvName.textContent = previewTitle;
 
     // Ignored Badge
     const ignoredCount = state.ignoredCount || 0;
@@ -465,8 +698,14 @@ class SwitcherApp {
       this.dom.sourceFilterStatus.textContent = `Showing all ${state.allInputs?.length || 0} sources`;
     }
 
-    // Render Switcher Grid
-    this.renderSourcesGrid(state.visibleInputs || []);
+    // Render current active view
+    if (this.currentView === 'audio') {
+      this.renderAudioMixer(state.allInputs || []);
+    } else if (this.currentView === 'multiview') {
+      this.renderMultiviewGrid(state.visibleInputs || []);
+    } else {
+      this.renderSourcesGrid(state.visibleInputs || []);
+    }
 
     // If Manage Sources modal is open, refresh it as well
     if (!this.dom.manageSourcesModal.classList.contains('hidden')) {
@@ -622,6 +861,210 @@ class SwitcherApp {
     } catch (err) {
       console.error('Failed to switch input', err);
     }
+  }
+
+  // ==================== AUDIO / MIC MIXER CONSOLE ====================
+  renderAudioMixer(inputs) {
+    if (!this.dom.audioChannelsGrid) return;
+    if (!inputs || inputs.length === 0) {
+      this.dom.audioChannelsGrid.innerHTML = `
+        <div class="loading-placeholder">
+          <p>No audio channels detected.</p>
+        </div>
+      `;
+      return;
+    }
+
+    const liveCount = inputs.filter(i => !i.muted).length;
+    if (this.dom.audioLiveCount) {
+      this.dom.audioLiveCount.textContent = `${liveCount} Live Audio`;
+    }
+
+    // If an input slider is currently being interacted with, avoid destroying the DOM
+    const activeEl = document.activeElement;
+    const isInteracting = activeEl && this.dom.audioChannelsGrid.contains(activeEl);
+
+    if (isInteracting) {
+      inputs.forEach(inp => {
+        const card = this.dom.audioChannelsGrid.querySelector(`[data-audio-input="${inp.number}"]`);
+        if (!card) return;
+        const isLive = !inp.muted;
+        card.classList.toggle('is-live', isLive);
+        card.classList.toggle('is-muted', !isLive);
+
+        const btn = card.querySelector('.audio-mute-toggle-btn');
+        if (btn) {
+          btn.className = `audio-mute-toggle-btn ${isLive ? 'live' : 'muted'}`;
+          btn.textContent = isLive ? 'LIVE / ON AIR' : 'MUTED';
+        }
+
+        const vuFill = card.querySelector('.audio-vu-fill');
+        if (vuFill) {
+          const vol = inp.volume !== undefined ? inp.volume : 100;
+          const pct = isLive ? Math.max(15, Math.min(100, Math.round(vol * 0.9))) : 0;
+          vuFill.style.width = `${pct}%`;
+        }
+      });
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+
+    inputs.forEach(inp => {
+      const isLive = !inp.muted;
+      const vol = Math.round(inp.volume !== undefined ? inp.volume : 100);
+      const title = inp.customTitle || inp.shortTitle || inp.title;
+
+      const card = document.createElement('div');
+      card.className = `audio-card ${isLive ? 'is-live' : 'is-muted'}`;
+      card.setAttribute('data-audio-input', inp.number);
+
+      card.innerHTML = `
+        <div class="audio-card-header">
+          <div class="audio-title-group">
+            <span class="source-number-badge">${inp.number}</span>
+            <div>
+              <div class="audio-card-title" title="${this.escapeHtml(title)}">${this.escapeHtml(title)}</div>
+              <div style="font-size: 0.72rem; color: var(--text-dim);">${inp.type || 'Audio'}</div>
+            </div>
+          </div>
+          <button type="button" class="audio-mute-toggle-btn ${isLive ? 'live' : 'muted'}" data-input="${inp.number}">
+            ${isLive ? 'LIVE / ON AIR' : 'MUTED'}
+          </button>
+        </div>
+        <div class="audio-fader-row">
+          <div class="audio-fader-labels">
+            <span>Fader Level</span>
+            <span class="audio-vol-text">${vol}%</span>
+          </div>
+          <input type="range" class="audio-fader-slider" min="0" max="100" value="${vol}" data-input="${inp.number}">
+          <div class="audio-vu-meter-bar">
+            <div class="audio-vu-fill" style="width: ${isLive ? Math.max(15, Math.round(vol * 0.9)) : 0}%;"></div>
+          </div>
+        </div>
+      `;
+
+      // Mute Toggle Button Click
+      const muteBtn = card.querySelector('.audio-mute-toggle-btn');
+      muteBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        this.vibrate();
+        this.playTone(isLive ? 350 : 700, 0.04);
+        try {
+          await API.toggleAudio(inp.number);
+        } catch (err) {
+          console.error('Failed to toggle audio', err);
+        }
+      });
+
+      // Slider Change / Input
+      const slider = card.querySelector('.audio-fader-slider');
+      const volText = card.querySelector('.audio-vol-text');
+      const vuFill = card.querySelector('.audio-vu-fill');
+
+      slider.addEventListener('input', (e) => {
+        const val = parseInt(e.target.value, 10);
+        volText.textContent = `${val}%`;
+        if (isLive) {
+          vuFill.style.width = `${Math.max(15, Math.round(val * 0.9))}%`;
+        }
+      });
+
+      slider.addEventListener('change', async (e) => {
+        const val = parseInt(e.target.value, 10);
+        try {
+          await API.setVolume(inp.number, val);
+        } catch (err) {
+          console.error('Failed to set volume', err);
+        }
+      });
+
+      fragment.appendChild(card);
+    });
+
+    this.dom.audioChannelsGrid.innerHTML = '';
+    this.dom.audioChannelsGrid.appendChild(fragment);
+  }
+
+  async muteAllAudio() {
+    if (!this.currentState?.allInputs) return;
+    this.vibrate();
+    this.playTone(300, 0.08);
+    for (const inp of this.currentState.allInputs) {
+      if (!inp.muted) {
+        try {
+          await API.executeFunction('AudioOff', { Input: inp.number });
+        } catch {}
+      }
+    }
+  }
+
+  async unmuteAllAudio() {
+    if (!this.currentState?.allInputs) return;
+    this.vibrate();
+    this.playTone(700, 0.08);
+    for (const inp of this.currentState.allInputs) {
+      if (inp.muted) {
+        try {
+          await API.executeFunction('AudioOn', { Input: inp.number });
+        } catch {}
+      }
+    }
+  }
+
+  // ==================== BIG SCREEN MULTIVIEWER ====================
+  renderMultiviewGrid(inputs) {
+    if (!this.dom.multiviewCamsGrid) return;
+    if (!inputs || inputs.length === 0) {
+      this.dom.multiviewCamsGrid.innerHTML = `
+        <div class="loading-placeholder">
+          <p>No multiview camera inputs.</p>
+        </div>
+      `;
+      return;
+    }
+
+    const existingTiles = this.dom.multiviewCamsGrid.querySelectorAll('.multiview-cam-tile');
+    const existingNums = Array.from(existingTiles).map(t => t.getAttribute('data-mv-input'));
+    const newNums = inputs.map(i => String(i.number));
+
+    const canUpdateInPlace = existingNums.length === newNums.length &&
+      existingNums.every((val, idx) => val === newNums[idx]);
+
+    if (canUpdateInPlace) {
+      existingTiles.forEach((tile, idx) => {
+        const inp = inputs[idx];
+        tile.classList.toggle('is-program', Boolean(inp.isActive));
+        tile.classList.toggle('is-preview', Boolean(inp.isPreview));
+        const titleEl = tile.querySelector('.mv-cam-title');
+        const title = inp.customTitle || inp.shortTitle || inp.title;
+        if (titleEl && titleEl.textContent !== title) {
+          titleEl.textContent = title;
+        }
+      });
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+
+    inputs.forEach(inp => {
+      const title = inp.customTitle || inp.shortTitle || inp.title;
+      const tile = document.createElement('div');
+      tile.className = `multiview-cam-tile ${inp.isActive ? 'is-program' : (inp.isPreview ? 'is-preview' : '')}`;
+      tile.setAttribute('data-mv-input', inp.number);
+
+      tile.innerHTML = `
+        <img class="mv-cam-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">
+        <span class="mv-cam-badge">CAM ${inp.number}</span>
+        <div class="mv-cam-title">${this.escapeHtml(title)}</div>
+      `;
+
+      tile.addEventListener('click', () => this.handleSourceClick(inp));
+      fragment.appendChild(tile);
+    });
+
+    this.dom.multiviewCamsGrid.innerHTML = '';
+    this.dom.multiviewCamsGrid.appendChild(fragment);
   }
 
   // Manage Sources Modal (Ignore/Hide inputs on app side)

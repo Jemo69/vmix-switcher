@@ -113,6 +113,25 @@ const API = {
     });
   },
 
+  async setVolume(input, volume) {
+    return this.request('/api/vmix/volume', {
+      method: 'POST',
+      body: JSON.stringify({ input, volume })
+    });
+  },
+
+  async toggleRecording() {
+    return this.executeFunction('StartStopRecording');
+  },
+
+  async toggleStreaming() {
+    return this.executeFunction('StartStopStreaming');
+  },
+
+  async toggleExternal() {
+    return this.executeFunction('StartStopExternal');
+  },
+
   getThumbnailUrl(input) {
     const token = this.getToken() || '';
     return `/api/vmix/thumbnail/${encodeURIComponent(input)}?token=${encodeURIComponent(token)}`;

@@ -149,6 +149,46 @@ def test_all():
         assert not any("http://ip:" in u for u in res["ips"]), f"Malformed IP found: {res['ips']}"
         print("✓ Network IP endpoints validated (no malformed candidate strings)")
 
+        # 14. Test StartStopRecording & StartStopExternal & StartStopStreaming
+        status, res = req(f"{base}/api/vmix/function", "POST", {"function": "StartStopRecording"}, token=token)
+        assert status == 200 and res.get("success") is True
+        time.sleep(0.2)
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        assert res.get("recording") is True, f"Expected recording True, got {res.get('recording')}"
+        print("✓ StartStopRecording toggle ON verified")
+
+        status, res = req(f"{base}/api/vmix/function", "POST", {"function": "StartStopExternal"}, token=token)
+        assert status == 200 and res.get("success") is True
+        time.sleep(0.2)
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        assert res.get("external") is True, f"Expected external True, got {res.get('external')}"
+        print("✓ StartStopExternal toggle ON verified")
+
+        status, res = req(f"{base}/api/vmix/function", "POST", {"function": "StartStopStreaming"}, token=token)
+        assert status == 200 and res.get("success") is True
+        time.sleep(0.2)
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        assert res.get("streaming") is True, f"Expected streaming True, got {res.get('streaming')}"
+        print("✓ StartStopStreaming toggle ON verified")
+
+        # 15. Test Audio Volume Endpoint & State
+        status, res = req(f"{base}/api/vmix/volume", "POST", {"input": 7, "volume": 65}, token=token)
+        assert status == 200 and res.get("success") is True
+        time.sleep(0.2)
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        inp7 = next(i for i in res["allInputs"] if i["number"] == 7)
+        assert inp7.get("volume") == 65.0, f"Expected volume 65.0, got {inp7.get('volume')}"
+        print("✓ Microphone / Audio volume fader endpoint verified (set to 65%)")
+
+        # 16. Test Dynamic Active and Preview Thumbnails
+        for target in ["active", "preview", "0"]:
+            req_dyn = urllib.request.Request(f"{base}/api/vmix/thumbnail/{target}?token={token}")
+            with urllib.request.urlopen(req_dyn, timeout=3.0) as resp:
+                assert resp.status == 200
+                data = resp.read()
+                assert len(data) > 0
+        print("✓ Dynamic Program and Preview monitor thumbnail proxy verified")
+
         print("\nALL PYTHON INTEGRATION TESTS PASSED! 🎉")
     finally:
         config_manager.config = initial_config

@@ -113,6 +113,10 @@ class OverlayRequest(BaseModel):
 class AudioRequest(BaseModel):
     input: Any
 
+class VolumeRequest(BaseModel):
+    input: Any
+    volume: float
+
 class IgnoreRequest(BaseModel):
     input: Any
     ignore: Optional[bool] = None
@@ -219,6 +223,14 @@ async def toggle_overlay(req: OverlayRequest, _: bool = Depends(require_auth)):
 async def toggle_audio(req: AudioRequest, _: bool = Depends(require_auth)):
     try:
         res = await vmix_client.toggle_audio(req.input)
+        return {"success": True, "result": res}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/vmix/volume")
+async def set_volume(req: VolumeRequest, _: bool = Depends(require_auth)):
+    try:
+        res = await vmix_client.execute_function("SetVolume", {"Input": req.input, "Value": req.volume})
         return {"success": True, "result": res}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -339,6 +351,14 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                 await vmix_client.toggle_overlay(data.get("overlay"), data.get("input"))
             elif action == "audio":
                 await vmix_client.toggle_audio(data.get("input"))
+            elif action == "volume":
+                await vmix_client.execute_function("SetVolume", {"Input": data.get("input"), "Value": data.get("value")})
+            elif action == "recording":
+                await vmix_client.execute_function("StartStopRecording")
+            elif action == "streaming":
+                await vmix_client.execute_function("StartStopStreaming")
+            elif action == "external":
+                await vmix_client.execute_function("StartStopExternal")
             elif action == "ping":
                 await websocket.send_json({"type": "pong"})
             elif action == "getState" and vmix_client.last_state:

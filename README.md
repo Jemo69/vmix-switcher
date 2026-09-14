@@ -2,8 +2,11 @@
 
 A modern, high-contrast, responsive web switcher for **vMix live video production software** — powered by **Python (FastAPI + WebSockets)**. Control your live show from phones, tablets (iPad/Android), laptops, and touchscreens on your local network.
 
-- 🔴 Instant source buttons with live tally (Red = Program/Live, Green = Preview)
-- ⚡ Direct-to-Program switching with your default transition (Fade, Cut, Zoom, …)
+- 🔴 **Live Visual Video Monitors**: Real-time Program (Red) and Preview (Green) video feeds right on the switcher bar
+- ⚡ **Dual Switching Modes**: One-tap toggle between **Direct Switch** (instant to Program) and **Preview + Take** (stage first, CUT/AUTO)
+- 🔴 **Interactive Broadcast Controls**: Clickable **REC** (with live timer), **STREAM**, **EXT** (External output), and **FULLSCREEN**
+- 🎤 **Dedicated Mic & Audio Console**: Tactical Mute/Live toggles, volume fader sliders (0-100%), and animated VU peak meters
+- 🖥️ **Big Screen Preview (Multiviewer)**: Fullscreen-ready production multiviewer with giant twin 16:9 displays, live clock, and multi-camera grid
 - 👁️ Hide auxiliary inputs (audio, overlays, test patterns) without touching vMix
 - 📱 Touch-optimized with haptics + click sounds, ⌨️ shortcuts (`1`–`9`, `Space`, `Enter`)
 - 🔄 Real-time sync across all crew devices via WebSocket
@@ -100,7 +103,31 @@ python -m pytest test/ -v
 
 ---
 
-## 🎛️ How to use
+## 🎛️ App Modes & How to use
+
+The switcher features 3 dedicated operational modes accessible via the top tab bar:
+
+### 1. 🎬 Video Switcher Mode
+- **Live Video Monitors:** View real-time Program & Preview feeds at the top of the console.
+- **Direct Switch vs Preview + Take:** Switch between instant switching or traditional preview staging directly via the mode pills.
+- **Quick Transitions:** Instant **CUT**, **AUTO** with selectable transition types (`Fade`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Trans 1/2`), plus **FTB** and **QuickPlay**.
+- **Interactive Broadcast Badges:**
+  - **REC:** Tap to start/stop recording with live timer display.
+  - **STREAM:** Tap to start/stop streaming.
+  - **EXT:** Tap to activate/deactivate external output.
+  - **FULLSCREEN:** Tap to expand the switcher to edge-to-edge fullscreen.
+
+### 2. 🎤 Mic & Audio Console Mode
+- **Tactile Mute/Live Toggles:** Instantly mute or take microphone/audio channels live on air.
+- **Fader Sliders:** Smooth 0–100% volume adjustment with real-time feedback.
+- **Signal Peak VU Meters:** Live animated level meters indicating audio activity.
+- **Master Actions:** Quick **Mute All Mics** and **Unmute All** buttons.
+
+### 3. 🖥️ Big Screen Preview (Multiviewer) Mode
+- **Giant Twin Displays:** Large-format 16:9 side-by-side Program (Red) & Preview (Green) video monitors.
+- **Production Clock:** Live high-visibility production studio clock.
+- **Multi-Camera Grid:** Multiview camera layout with red/green tally borders; tap any camera to switch or stage.
+- **Dedicated Fullscreen:** One-click expansion for secondary monitors or multiviewer displays.
 
 - **Direct Switch (default):** tap a source → it transitions straight to Program output.
 - **Change transition:** dropdown at top center (`Fade`, `Cut`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Transition 1/2` + duration).

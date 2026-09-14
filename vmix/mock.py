@@ -8,6 +8,7 @@ class MockVMix:
         self.streaming = False
         self.fullscreen = False
         self.fade_to_black = False
+        self.external = False
         self.overlays: Dict[str, Any] = {"1": None, "2": None, "3": None, "4": None}
 
         self.inputs: List[Dict[str, Any]] = [
@@ -17,7 +18,7 @@ class MockVMix:
             {"number": 4, "key": "mock-4", "title": "Screen Share - PPT", "shortTitle": "Screen PPT", "type": "DesktopCapture", "state": "Running", "muted": True, "volume": 0},
             {"number": 5, "key": "mock-5", "title": "Video Clip - Intro", "shortTitle": "Intro Video", "type": "Video", "state": "Paused", "muted": False, "volume": 100},
             {"number": 6, "key": "mock-6", "title": "Lower Third - Speaker", "shortTitle": "Lower Third", "type": "Title", "state": "Running", "muted": True, "volume": 0},
-            {"number": 7, "key": "mock-7", "title": "Microphone Main", "shortTitle": "Mic Main", "type": "Audio", "state": "Running", "muted": False, "volume": 100},
+            {"number": 7, "key": "mock-7", "title": "Microphone Main", "shortTitle": "Mic Main", "type": "Audio", "state": "Running", "muted": False, "volume": 90},
             {"number": 8, "key": "mock-8", "title": "Color Bars / Test Pattern", "shortTitle": "Test Bars", "type": "Colour", "state": "Running", "muted": True, "volume": 0},
         ]
 
@@ -31,6 +32,7 @@ class MockVMix:
             "recording": self.recording,
             "streaming": self.streaming,
             "fullscreen": self.fullscreen,
+            "external": self.external,
             "fadeToBlack": self.fade_to_black,
             "overlays": dict(self.overlays),
             "inputs": [
@@ -77,10 +79,31 @@ class MockVMix:
                 if inp["number"] == input_num:
                     inp["muted"] = not inp.get("muted", False)
                     break
+        elif fn in ("audioon",) and input_num:
+            for inp in self.inputs:
+                if inp["number"] == input_num:
+                    inp["muted"] = False
+                    break
+        elif fn in ("audiooff",) and input_num:
+            for inp in self.inputs:
+                if inp["number"] == input_num:
+                    inp["muted"] = True
+                    break
+        elif fn in ("setvolume", "volume") and input_num:
+            val = params.get("Value", 100)
+            for inp in self.inputs:
+                if inp["number"] == input_num:
+                    try:
+                        inp["volume"] = max(0.0, min(100.0, float(val)))
+                    except (ValueError, TypeError):
+                        pass
+                    break
         elif fn in ("startstoprecording", "recording"):
             self.recording = not self.recording
         elif fn in ("startstopstreaming", "streaming"):
             self.streaming = not self.streaming
+        elif fn in ("startstopexternal", "external"):
+            self.external = not self.external
         elif fn == "fullscreen":
             self.fullscreen = not self.fullscreen
 
