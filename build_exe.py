@@ -105,10 +105,17 @@ def build(onedir: bool = False, debug: bool = False) -> Path:
         ext = ".exe" if sys.platform.startswith("win") else ""
         result = dist_dir / (out_name + ext)
 
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     print("\n==================================================")
     print("Build complete!")
-    print(f"  👉 {result}")
-    print("Share this single file — no Python needed on the other PC.")
+    print(f"  -> {result}")
+    print("Share this single file -- no Python needed on the other PC.")
     print("First run creates config.json next to the exe.")
     print("==================================================\n")
     return result

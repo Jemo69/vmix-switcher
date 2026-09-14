@@ -30,8 +30,20 @@ if %errorlevel% neq 0 (
     set PY_CMD=python
 )
 
+REM Use virtual environment if possible to avoid permission or path issues
+if not exist ".venv" (
+    echo Creating virtual environment (.venv)...
+    %PY_CMD% -m venv .venv >nul 2>nul
+)
+
+if exist ".venv\Scripts\python.exe" (
+    set RUN_PY=.venv\Scripts\python.exe
+) else (
+    set RUN_PY=%PY_CMD%
+)
+
 echo  Checking Python packages (first run takes a minute)...
-%PY_CMD% -m pip install -r requirements.txt --quiet --disable-pip-version-check
+%RUN_PY% -m pip install -r requirements.txt --quiet --disable-pip-version-check
 if %errorlevel% neq 0 (
     echo  [WARNING] Pip install had warnings, continuing anyway...
 )
@@ -45,7 +57,7 @@ echo.
 REM Open browser after a short delay so the server is up
 start "" /min cmd /c "timeout /t 4 /nobreak >nul & start "" http://localhost:3000"
 
-%PY_CMD% run.py
+%RUN_PY% run.py
 if %errorlevel% neq 0 (
     echo.
     echo  [ERROR] The switcher stopped with an error.

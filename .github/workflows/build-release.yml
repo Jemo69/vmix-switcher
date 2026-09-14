@@ -34,6 +34,9 @@ jobs:
           - os: ubuntu-latest
             artifact: vmix-switcher-linux
 
+    env:
+      PYTHONIOENCODING: "utf-8"
+
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -58,12 +61,10 @@ jobs:
           BIN="dist/${{ matrix.artifact }}"
           ls -lh dist/
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            # Just verify it launches; kill after a few seconds
             ./dist/${{ matrix.artifact }} &
-            PID=$!
             sleep 12
-            curl --fail --retry 5 --retry-delay 2 http://localhost:3000/ -o /dev/null || (kill $PID; exit 1)
-            kill $PID || taskkill //F //PID $PID || true
+            curl --fail --retry 5 --retry-delay 2 http://localhost:3000/ -o /dev/null || (taskkill //F //IM vmix-switcher-windows.exe || true; exit 1)
+            taskkill //F //IM vmix-switcher-windows.exe || true
           else
             chmod +x "$BIN"
             "$BIN" &

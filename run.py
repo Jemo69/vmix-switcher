@@ -2,7 +2,17 @@
 import sys
 import subprocess
 
+# Ensure UTF-8 output on Windows consoles to prevent cp1252 charmap crashes
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 def check_dependencies():
+    if getattr(sys, "frozen", False):
+        return
     missing = []
     for pkg in ["fastapi", "uvicorn", "websockets"]:
         try:
@@ -23,14 +33,14 @@ if __name__ == "__main__":
     port = cfg.get("port", 3000)
 
     print("\n=============================================================")
-    print("       🎬 vMix Web Switcher (Python) is Running!             ")
+    print("       vMix Web Switcher (Python) is Running!                ")
     print("=============================================================")
     print(f" Local Computer URL:   http://localhost:{port}")
     ips = get_network_ips(port)
     if ips:
         print(" Network Device Access (Tablets, Phones, Laptops):")
         for u in ips:
-            print(f"   👉 {u}")
+            print(f"   -> {u}")
     print("-------------------------------------------------------------")
     print(f" Default Password:     {cfg.get('password', 'vmix')}")
     print(f" Targeting vMix at:    http://{cfg.get('vmixHost', '127.0.0.1')}:{cfg.get('vmixPort', 8088)}")
@@ -38,3 +48,4 @@ if __name__ == "__main__":
     print("=============================================================\n")
 
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+

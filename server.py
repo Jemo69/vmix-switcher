@@ -357,19 +357,26 @@ if os.path.isdir(static_dir):
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     import uvicorn
     cfg = config_manager.get()
     port = cfg.get("port", 3000)
 
     print("\n=============================================================")
-    print("     🎬 vMix Web Switcher (Python FastAPI) Starting!         ")
+    print("     vMix Web Switcher (Python FastAPI) Starting!            ")
     print("=============================================================")
     print(f" Local URL:           http://localhost:{port}")
     ips = get_network_ips(port)
     if ips:
         print(" Network Access (Phones / Tablets / Laptops):")
         for u in ips:
-            print(f"   👉 {u}")
+            print(f"   -> {u}")
     print("-------------------------------------------------------------")
     print(f" Default Password:    {cfg.get('password', 'vmix')}")
     print(f" Targeting vMix at:   http://{cfg.get('vmixHost', '127.0.0.1')}:{cfg.get('vmixPort', 8088)}")
