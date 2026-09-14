@@ -9,6 +9,14 @@ from .config import config_manager
 from .mock import mock_vmix
 
 class VMixClient:
+    # Snapshot budget: vMix renders + JPEG-encodes each SnapshotInput on the
+    # live production PC, so triggers are spaced globally and per input.
+    # Stills converge in seconds; motion inputs refresh every few seconds.
+    SNAP_MIN_ANY_INTERVAL = 1.0    # min seconds between any two snapshot triggers
+    SNAP_MIN_INPUT_INTERVAL = 3.0  # min seconds between snapshots of the same input
+    SNAP_MAX_FILE_AGE = 30.0       # serve files up to this old while revalidating
+    SNAP_SUCCESS_FRESH = 20.0      # file newer than this counts as "live"
+
     def __init__(self):
         self.connected = False
         self.last_state: Optional[Dict[str, Any]] = None
@@ -19,6 +27,13 @@ class VMixClient:
         self._thumb_inflight: Dict[str, asyncio.Future] = {}  # key -> shared in-flight fetch
         self._last_signature: Optional[tuple] = None
         self._last_broadcast_time: float = 0.0
+        # Live snapshot thumbnails (see _load_thumbnail for rationale)
+        self._snap_dir: Optional[str] = None
+        self._snap_last_any: float = 0.0
+        self._snap_last_input: Dict[str, float] = {}
+        self._snap_last_success: float = 0.0
+        self._thumb_mode: str = "starting"  # live|starting|remote|offline|mock
+        self._thumb_detail: str = ""
 
     def add_callback(self, cb: Callable[[Dict[str, Any]], Any]) -> None:
         if cb not in self.callbacks:
@@ -87,11 +102,6 @@ class VMixClient:
             except Exception:
                 pass
             raise RuntimeError(f"vMix HTTP Error {err.code}: {err_msg or err.reason}")
-
-    def _fetch_binary(self, url: str, timeout: float = 1.5) -> bytes:
-        req = urllib.request.Request(url, headers={"User-Agent": "vMix-Web-Switcher/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read()
 
     def _parse_xml(self, xml_text: str) -> Dict[str, Any]:
         root = ET.fromstring(xml_text)
@@ -210,7 +220,8 @@ class VMixClient:
             "defaultTransition": cfg.get("defaultTransition", "Fade"),
             "transitionDuration": cfg.get("transitionDuration", 500),
             "switcherMode": cfg.get("switcherMode", "direct"),
-            "previewFps": self._preview_fps()
+            "previewFps": self._preview_fps(),
+            **self.thumbnail_status(),
         }
 
         self.last_state = full_state
@@ -229,6 +240,7 @@ class VMixClient:
             full_state.get("transitionDuration"),
             full_state.get("switcherMode"),
             full_state.get("previewFps"),
+            full_state.get("thumbnailMode"),
             len(visible_inputs),
             tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("volume"), i.get("customTitle"), i.get("isIgnored")) for i in all_inputs)
         )
@@ -387,35 +399,139 @@ class VMixClient:
         return None
 
     async def _load_thumbnail(self, target_id: Any, cache_key: str) -> tuple[bytes, str]:
+        # vMix exposes NO per-input image endpoint (there is no Thumbnail.aspx
+        # — verified against official docs + forums). The supported path is
+        #   Function=SnapshotInput&Input=<num|key>&Value=<abs path on vMix PC>
+        # which writes a JPEG on the vMix machine. That only works when this
+        # server runs ON the vMix PC (the documented setup), so we detect that
+        # and otherwise serve honest placeholders instead of fake "live" images.
         now = time.time()
         cfg = config_manager.get()
 
-        if cfg.get("mockMode", False) or not self.connected:
-            svg = self._generate_mock_svg(str(target_id))
-            data = svg.encode("utf-8")
-            self._thumb_cache[cache_key] = (now, data, "image/svg+xml")
-            return data, "image/svg+xml"
+        if cfg.get("mockMode", False):
+            self._set_thumb_status("mock", "Simulator — demo graphics")
+            return self._svg_bytes(str(target_id))
 
-        host = cfg.get("vmixHost", "127.0.0.1")
-        port = cfg.get("vmixPort", 8088)
-        param_name = "Key" if "-" in str(target_id) else "Input"
-        url = f"http://{host}:{port}/Thumbnail.aspx?{param_name}={urllib.parse.quote(str(target_id))}"
+        if not self.connected:
+            self._set_thumb_status("offline", "vMix offline")
+            return self._svg_bytes(str(target_id))
 
+        if not self._is_vmix_local():
+            self._set_thumb_status("remote", "Live images need the switcher running on the vMix PC")
+            return self._svg_bytes(str(target_id))
+
+        # Local vMix PC: snapshot pipeline with stale-while-revalidate.
+        # The HTTP response never blocks on vMix rendering: we serve the last
+        # snapshot file immediately and fire-and-forget the refresh trigger.
+        import os
+        key = self._resolve_input_key(target_id)
+        path = os.path.join(self._snap_dir_path(), self._snap_filename(key))
+
+        mtime = 0.0
+        if os.path.isfile(path):
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                mtime = 0.0
+
+        if mtime > 0 and (now - mtime) <= self.SNAP_SUCCESS_FRESH:
+            self._snap_last_success = max(self._snap_last_success, mtime)
+
+        due = (mtime <= 0) or ((now - mtime) > self.SNAP_MIN_INPUT_INTERVAL)
+        if due and (now - self._snap_last_any) >= self.SNAP_MIN_ANY_INTERVAL:
+            self._snap_last_any = now
+            self._snap_last_input[str(key)] = now
+            asyncio.create_task(self._trigger_snapshot(key, path))
+
+        if mtime > 0 and (now - mtime) <= self.SNAP_MAX_FILE_AGE:
+            try:
+                with open(path, "rb") as fh:
+                    raw = fh.read()
+                mime = self._sniff_image_mime(raw) or "image/jpeg"
+                self._thumb_cache[cache_key] = (now, raw, mime)
+                if (now - mtime) <= self.SNAP_SUCCESS_FRESH:
+                    self._set_thumb_status("live", "Snapshots refreshing from vMix")
+                else:
+                    self._set_thumb_status("starting", "Waiting on fresh snapshots from vMix…")
+                return raw, mime
+            except OSError:
+                pass
+
+        self._set_thumb_status("starting", "Requesting first snapshots from vMix…")
+        if (now - self._snap_last_success) <= self.SNAP_SUCCESS_FRESH:
+            # Another input is already streaming snapshots — don't let one
+            # still-converging input hide that from the UI pills.
+            self._set_thumb_status("live", "Snapshots refreshing from vMix")
+        return self._svg_bytes(str(target_id))
+
+    async def _trigger_snapshot(self, key: str, path: str) -> None:
         try:
-            timeout = max(2.0, 4.0 / self._preview_fps())
-            raw_bytes = await asyncio.to_thread(self._fetch_binary, url, timeout)
-            mime = self._sniff_image_mime(raw_bytes)
-            if mime is None:
-                raise RuntimeError("vMix returned non-image bytes for thumbnail")
-            self._thumb_cache[cache_key] = (now, raw_bytes, mime)
-            return raw_bytes, mime
+            await self.execute_function("SnapshotInput", {"Input": key, "Value": path})
+        except Exception as err:
+            self._set_thumb_status("starting", f"Snapshot failed: {err}")
+
+    def _set_thumb_status(self, mode: str, detail: str) -> None:
+        if mode != self._thumb_mode:
+            self._thumb_mode = mode
+            self._last_signature = None  # force rebroadcast so the UI pill flips
+        self._thumb_detail = detail
+
+    def thumbnail_status(self) -> Dict[str, Any]:
+        return {
+            "thumbnailLive": self._thumb_mode == "live",
+            "thumbnailMode": self._thumb_mode,
+            "thumbnailDetail": self._thumb_detail,
+        }
+
+    def _is_vmix_local(self) -> bool:
+        """True when the configured vMix host is this machine (loopback or a
+        local interface IP). Snapshots are files on the vMix PC, so only a
+        same-machine server can capture and serve them."""
+        host = (config_manager.get().get("vmixHost", "127.0.0.1") or "").strip().lower()
+        if host in ("127.0.0.1", "localhost", "::1"):
+            return True
+        try:
+            import socket
+            try:
+                target = socket.gethostbyname(host)
+            except OSError:
+                return False
+            if target in ("127.0.0.1", "::1"):
+                return True
+            try:
+                if target == socket.gethostbyname(socket.gethostname()):
+                    return True
+            except OSError:
+                pass
+            return False
         except Exception:
-            cached = self._thumb_cache.get(cache_key)
-            if cached:
-                return cached[1], cached[2]
-            svg = self._generate_mock_svg(str(target_id))
-            data = svg.encode("utf-8")
-            return data, "image/svg+xml"
+            return False
+
+    def _snap_dir_path(self) -> str:
+        import os
+        import tempfile
+        if not self._snap_dir:
+            d = os.path.join(tempfile.gettempdir(), "vmix-switcher-snaps")
+            os.makedirs(d, exist_ok=True)
+            self._snap_dir = d
+        return self._snap_dir
+
+    @staticmethod
+    def _snap_filename(key: str) -> str:
+        safe = "".join(c if (c.isalnum() or c in ("-", "_")) else "_" for c in str(key))
+        return f"snap_{safe[:64]}.jpg"
+
+    def _resolve_input_key(self, target_id: Any) -> str:
+        """Stable snapshot identity for an input (keys survive reordering)."""
+        tid = str(target_id)
+        if self.last_state:
+            for inp in self.last_state.get("allInputs", []):
+                if str(inp.get("number")) == tid or str(inp.get("key")) == tid:
+                    return str(inp.get("key") or inp.get("number"))
+        return tid
+
+    def _svg_bytes(self, input_id: str) -> tuple[bytes, str]:
+        return self._generate_mock_svg(input_id).encode("utf-8"), "image/svg+xml"
 
     def _generate_mock_svg(self, input_id: str) -> str:
         title = f"Input {input_id}"

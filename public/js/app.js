@@ -58,6 +58,9 @@ class SwitcherApp {
       pgmName: document.getElementById('pgm-name'),
       prvNumber: document.getElementById('prv-number'),
       prvName: document.getElementById('prv-name'),
+      pgmThumbMode: document.getElementById('pgm-thumb-mode'),
+      prvThumbMode: document.getElementById('prv-thumb-mode'),
+      mvThumbMode: document.getElementById('mv-thumb-mode'),
 
       btnCut: document.getElementById('btn-cut'),
       btnAuto: document.getElementById('btn-auto'),
@@ -701,6 +704,26 @@ class SwitcherApp {
     this.dom.vmixStatusText.textContent = text;
   }
 
+  // Snapshot pill: IMG:LIVE = real JPEG from vMix, anything else = graphic
+  // placeholder (with the reason in the tooltip).
+  updateThumbPill(el, state) {
+    if (!el) return;
+    const mode = state.thumbnailMode || 'starting';
+    const detail = state.thumbnailDetail || '';
+    const map = {
+      live: ['IMG:LIVE', 'is-live', 'Live snapshot from vMix'],
+      starting: ['IMG:LOAD', 'is-waiting', detail || 'Requesting snapshots from vMix…'],
+      remote: ['IMG:OFF', 'is-off', detail || 'Run the switcher on the vMix PC for live images'],
+      offline: ['IMG:OFF', 'is-off', 'vMix offline'],
+      mock: ['DEMO', 'is-off', 'Simulator mode — demo graphics'],
+    };
+    const [text, cls, title] = map[mode] || map.starting;
+    if (el.textContent !== text) el.textContent = text;
+    const nextCls = `thumb-mode-pill ${cls}`;
+    if (el.className !== nextCls) el.className = nextCls;
+    if (title && el.title !== title) el.title = title;
+  }
+
   // State Updates & Rendering
   handleStateUpdate(state) {
     this.currentState = state;
@@ -760,6 +783,11 @@ class SwitcherApp {
     this.dom.pgmName.textContent = activeTitle;
     this.dom.prvNumber.textContent = previewNum || '--';
     this.dom.prvName.textContent = previewTitle;
+
+    // Snapshot LIVE vs placeholder pills (vMix has no video-feed API)
+    this.updateThumbPill(this.dom.pgmThumbMode, state);
+    this.updateThumbPill(this.dom.prvThumbMode, state);
+    this.updateThumbPill(this.dom.mvThumbMode, state);
 
     // Update Live Monitor Images — steady-state refresh is owned by the
     // thumbnail interval loop (with visibility + load gating). Here we only

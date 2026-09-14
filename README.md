@@ -2,7 +2,7 @@
 
 A modern, high-contrast, responsive web switcher for **vMix live video production software** — powered by **Python (FastAPI + WebSockets)**. Control your live show from phones, tablets (iPad/Android), laptops, and touchscreens on your local network.
 
-- 🔴 **Live Visual Video Monitors**: Real-time Program (Red) and Preview (Green) video feeds right on the switcher bar
+- 🔴 **Live Snapshot Monitors**: Program (Red) and Preview (Green) snapshots pulled straight from vMix, right on the switcher bar (needs the app running on the vMix PC)
 - ⚡ **Dual Switching Modes**: One-tap toggle between **Direct Switch** (instant to Program) and **Preview + Take** (stage first, CUT/AUTO)
 - 🔴 **Interactive Broadcast Controls**: Clickable **REC** (with live timer), **STREAM**, **EXT** (External output), and **FULLSCREEN**
 - 🎤 **Dedicated Mic & Audio Console**: Tactical Mute/Live toggles, volume fader sliders (0-100%), and animated VU peak meters
@@ -108,7 +108,7 @@ python -m pytest test/ -v
 The switcher features 3 dedicated operational modes accessible via the top tab bar:
 
 ### 1. 🎬 Video Switcher Mode
-- **Live Video Monitors:** View real-time Program & Preview feeds at the top of the console.
+- **Snapshot Monitors:** Program & Preview snapshots pulled from vMix at the top of the console (IMG:LIVE pill = real image).
 - **Direct Switch vs Preview + Take:** Switch between instant switching or traditional preview staging directly via the mode pills.
 - **Quick Transitions:** Instant **CUT**, **AUTO** with selectable transition types (`Fade`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Trans 1/2`), plus **FTB** and **QuickPlay**.
 - **Interactive Broadcast Badges:**
