@@ -152,10 +152,10 @@
           <!-- Switching Method Toggle -->
           <div class="method-toggle-container">
             <button type="button" id="method-direct-btn" class="method-pill-btn active" title="Instant Direct Switching">
-              ⚡ Direct Switch
+              Direct Switch
             </button>
             <button type="button" id="method-preview-btn" class="method-pill-btn" title="Traditional Preview + Take Switching">
-              🎬 Preview + Take
+              Preview + Take
             </button>
           </div>
 
@@ -217,11 +217,13 @@
 
       <!-- Main Switcher Buttons Grid -->
       <main class="switcher-viewport">
-        <div id="sources-grid" class="sources-grid">
-          <div class="loading-placeholder">
-            <div class="spinner"></div>
-            <p>Connecting to vMix and loading sources...</p>
-          </div>
+        <div id="sources-grid" class="sources-grid" aria-busy="true">
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
         </div>
       </main>
     </div>
@@ -231,7 +233,7 @@
       <div class="audio-control-header">
         <div class="audio-header-left">
           <div class="audio-header-title-group">
-            <h3>🎤 Microphone &amp; Audio Console</h3>
+            <h3>Microphone &amp; Audio Console</h3>
             <span class="audio-active-count-pill" id="audio-live-count">0 Live Mics</span>
           </div>
           <p class="audio-header-desc">Instant mute/unmute switching, volume faders, and signal peak meters for all audio inputs</p>
@@ -256,7 +258,7 @@
     <div id="view-multiview" class="view-panel hidden">
       <div class="multiview-header">
         <div class="multiview-title-group">
-          <h3>📺 Preview Mode</h3>
+          <h3>Preview Mode</h3>
           <p class="multiview-subtitle">Snapshots pulled from vMix every few seconds • The big corner monitor shows what is currently live on air</p>
         </div>
 
@@ -268,15 +270,15 @@
 
           <div class="corner-position-pills">
             <button type="button" id="corner-pos-left-btn" class="corner-pill-btn active" title="Place Live Screen in Top-Left Corner">
-              ↖ Corner: Left
+              Corner: Left
             </button>
             <button type="button" id="corner-pos-right-btn" class="corner-pill-btn" title="Place Live Screen in Top-Right Corner">
-              ↗ Corner: Right
+              Corner: Right
             </button>
           </div>
 
           <button id="mv-fullscreen-toggle-btn" class="btn btn-primary btn-sm">
-            ⛶ Fullscreen Wall
+            Fullscreen Wall
           </button>
         </div>
       </div>
@@ -359,11 +361,11 @@
           <table class="sources-table">
             <thead>
               <tr>
-                <th style="width: 70px;">Input #</th>
+                <th class="col-num">Input #</th>
                 <th>Source Title in vMix</th>
                 <th>Custom Button Label</th>
                 <th>Type</th>
-                <th style="width: 140px; text-align: center;">Display on Switcher</th>
+                <th class="col-center col-display">Display on Switcher</th>
               </tr>
             </thead>
             <tbody id="manage-sources-table-body">
@@ -430,7 +432,7 @@
               </div>
             </div>
 
-            <div class="form-group checkbox-group" style="margin-top: 14px;">
+            <div class="form-group checkbox-group checkbox-group-spaced">
               <label class="toggle-switch">
                 <input type="checkbox" id="setting-show-thumbnails">
                 <span class="slider"></span>
@@ -441,7 +443,7 @@
               </div>
             </div>
 
-            <div class="form-group" style="margin-top: 12px;">
+            <div class="form-group form-group-spaced">
               <label for="setting-preview-fps">Live Preview Refresh Rate</label>
               <select id="setting-preview-fps">
                 <option value="1">1 fps (lowest load)</option>
