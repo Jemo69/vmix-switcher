@@ -149,9 +149,9 @@ def get_network_ips(port: int) -> List[str]:
         for info in socket.getaddrinfo(hostname, None):
             ip = info[4][0]
             if ":" not in ip and not ip.startswith("127."):
-                candidate = f"http://ip:{port}"
+                candidate = f"http://{ip}:{port}"
                 if candidate not in ips:
-                    ips.append(f"http://{ip}:{port}")
+                    ips.append(candidate)
     except Exception:
         pass
 
@@ -177,6 +177,7 @@ async def get_state(_: bool = Depends(require_auth)):
     state = vmix_client.last_state or {
         "connected": vmix_client.connected,
         "lastError": vmix_client.last_error,
+        "fadeToBlack": False,
         "inputs": [],
         "visibleInputs": [],
         "allInputs": []

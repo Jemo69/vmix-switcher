@@ -16,6 +16,8 @@ class VMixClient:
         self.poll_task: Optional[asyncio.Task] = None
         self.callbacks: List[Callable[[Dict[str, Any]], Any]] = []
         self._thumb_cache: Dict[str, tuple[float, bytes, str]] = {}  # key -> (timestamp, data, content_type)
+        self._last_signature: Optional[tuple] = None
+        self._last_broadcast_time: float = 0.0
 
     def add_callback(self, cb: Callable[[Dict[str, Any]], Any]) -> None:
         if cb not in self.callbacks:
@@ -74,8 +76,16 @@ class VMixClient:
 
     def _fetch_url(self, url: str, timeout: float = 1.5) -> str:
         req = urllib.request.Request(url, headers={"User-Agent": "vMix-Web-Switcher/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read().decode("utf-8", errors="replace")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as err:
+            err_msg = ""
+            try:
+                err_msg = err.read().decode("utf-8", errors="replace").strip()
+            except Exception:
+                pass
+            raise RuntimeError(f"vMix HTTP Error {err.code}: {err_msg or err.reason}")
 
     def _fetch_binary(self, url: str, timeout: float = 1.5) -> bytes:
         req = urllib.request.Request(url, headers={"User-Agent": "vMix-Web-Switcher/1.0"})
@@ -94,6 +104,7 @@ class VMixClient:
         active_num = int(active_val) if active_val.isdigit() else active_val
         preview_num = int(preview_val) if preview_val.isdigit() else preview_val
 
+        fade_to_black = (root.findtext("fadeToBlack", "False") or "").lower() == "true"
         recording = (root.findtext("recording", "False") or "").lower() == "true"
         streaming = (root.findtext("streaming", "False") or "").lower() == "true"
         fullscreen = (root.findtext("fullscreen", "False") or "").lower() == "true"
@@ -118,18 +129,22 @@ class VMixClient:
             num_str = inp.attrib.get("number", "0")
             num = int(num_str) if num_str.isdigit() else 0
             key = inp.attrib.get("key", str(num))
-            title = inp.attrib.get("title", inp.text or f"Input {num}")
-            short_title = inp.attrib.get("shortTitle", title)
+            title = inp.attrib.get("title") or (inp.text.strip() if inp.text else "") or f"Input {num}"
+            short_title = inp.attrib.get("shortTitle") or title
             inp_type = inp.attrib.get("type", "Generic")
             state = inp.attrib.get("state", "Running")
             muted = (inp.attrib.get("muted", "False") or "").lower() == "true"
-            volume = float(inp.attrib.get("volume", "100"))
+            volume_str = inp.attrib.get("volume", "100")
+            try:
+                volume = float(volume_str)
+            except ValueError:
+                volume = 100.0
 
-            is_active = (num == active_num) or (key == str(active_val))
-            is_preview = (num == preview_num) or (key == str(preview_val))
+            is_active = bool(active_num and ((num == active_num) or (key == str(active_val))))
+            is_preview = bool(preview_num and ((num == preview_num) or (key == str(preview_val))))
 
             # Active overlays for this input
-            active_overlays = [int(k) for k, v in overlays.items() if (v == num or str(v) == key)]
+            active_overlays = [int(k) for k, v in overlays.items() if k.isdigit() and (v == num or str(v) == key)]
 
             inputs.append({
                 "number": num,
@@ -151,6 +166,7 @@ class VMixClient:
             "preset": preset,
             "active": active_num,
             "preview": preview_num,
+            "fadeToBlack": fade_to_black,
             "recording": recording,
             "streaming": streaming,
             "fullscreen": fullscreen,
@@ -196,7 +212,29 @@ class VMixClient:
         }
 
         self.last_state = full_state
-        self._notify(full_state)
+
+        # Check if state signature changed or if periodic sync interval (5.0s) has passed
+        sig = (
+            full_state.get("connected"),
+            full_state.get("active"),
+            full_state.get("preview"),
+            full_state.get("fadeToBlack"),
+            full_state.get("recording"),
+            full_state.get("streaming"),
+            full_state.get("fullscreen"),
+            full_state.get("defaultTransition"),
+            full_state.get("transitionDuration"),
+            full_state.get("switcherMode"),
+            len(visible_inputs),
+            tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("customTitle"), i.get("isIgnored")) for i in all_inputs)
+        )
+
+        now = time.time()
+        if sig != self._last_signature or (now - self._last_broadcast_time > 5.0):
+            self._last_signature = sig
+            self._last_broadcast_time = now
+            self._notify(full_state)
+
         return full_state
 
     def _notify(self, state: Dict[str, Any]) -> None:
@@ -214,6 +252,8 @@ class VMixClient:
 
         if cfg.get("mockMode", False):
             res = mock_vmix.execute_function(func_name, params)
+            # Invalidate signature to force immediate broadcast
+            self._last_signature = None
             await self.poll()
             return res
 
@@ -231,6 +271,8 @@ class VMixClient:
 
     async def _delayed_poll(self, delay: float) -> None:
         await asyncio.sleep(delay)
+        # Invalidate signature so switch triggers an immediate broadcast
+        self._last_signature = None
         await self.poll()
 
     async def switch_input(self, input_number: int | str, transition_override: Optional[str] = None, duration_override: Optional[int] = None) -> Dict[str, Any]:
@@ -243,9 +285,26 @@ class VMixClient:
             return await self.execute_function("PreviewInput", {"Input": input_number})
 
         # Direct mode: transition selected input directly to output!
+        # Safety check: If input is already active on Program, do not re-transition (prevents accidental swap)
+        if self.last_state:
+            active_val = str(self.last_state.get("active", ""))
+            input_str = str(input_number)
+            if active_val and (active_val == input_str):
+                return {"success": True, "message": "Input is already active on Program"}
+            for inp in self.last_state.get("allInputs", []):
+                if (str(inp.get("number")) == input_str or str(inp.get("key")) == input_str) and inp.get("isActive"):
+                    return {"success": True, "message": "Input is already active on Program"}
+
         trans_lower = transition.lower()
         if trans_lower in ("cut", "cutdirect"):
             return await self.execute_function("CutDirect", {"Input": input_number})
+
+        # In vMix, Transition1 to Transition4 shortcut functions do not accept Input parameter;
+        # they click the Transition 1..4 button which transitions Preview to Active.
+        # To direct-transition with Transition1..4, stage the input in Preview first, then trigger Transition.
+        if trans_lower in ("transition1", "transition2", "transition3", "transition4"):
+            await self.execute_function("PreviewInput", {"Input": input_number})
+            return await self.execute_function(transition)
 
         params: Dict[str, Any] = {"Input": input_number}
         if duration and not trans_lower.startswith("transition"):

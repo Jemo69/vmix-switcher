@@ -1,0 +1,113 @@
+name: Build Release Binaries
+
+# Builds a standalone executable for Windows, macOS, and Linux
+# whenever you push a version tag (e.g. v1.0.0) or click "Run workflow".
+# Binaries are attached to the GitHub Release automatically.
+#
+# How to release (for maintainers):
+#   git tag v1.0.0
+#   git push origin v1.0.0
+# Then tell your crew: download the file for their OS from
+#   https://github.com/Jemo69/vmix-switcher/releases
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: vmix-switcher-windows.exe
+          - os: macos-latest
+            artifact: vmix-switcher-macos
+          - os: ubuntu-latest
+            artifact: vmix-switcher-linux
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-build.txt
+
+      - name: Build executable
+        run: python build_exe.py
+
+      - name: Smoke test (binary starts and serves UI)
+        shell: bash
+        run: |
+          BIN="dist/${{ matrix.artifact }}"
+          ls -lh dist/
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            # Just verify it launches; kill after a few seconds
+            ./dist/${{ matrix.artifact }} &
+            PID=$!
+            sleep 12
+            curl --fail --retry 5 --retry-delay 2 http://localhost:3000/ -o /dev/null || (kill $PID; exit 1)
+            kill $PID || taskkill //F //PID $PID || true
+          else
+            chmod +x "$BIN"
+            "$BIN" &
+            PID=$!
+            sleep 8
+            curl --fail --retry 5 --retry-delay 2 http://localhost:3000/ -o /dev/null || (kill $PID; exit 1)
+            kill $PID
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Attach to GitHub Release
+    needs: build
+    # Only attach on tag pushes, not on manual runs
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: binaries/*
+          generate_release_notes: true
+          body: |
+            ## 🎬 vMix Web Switcher
+
+            **Non-technical users — just download and double-click:**
+            - Windows → `vmix-switcher-windows.exe`
+            - macOS → `vmix-switcher-macos` (right-click → Open on first run)
+            - Linux → `vmix-switcher-linux`
+
+            No Python needed. The app opens at `http://localhost:3000`
+            and prints the Wi-Fi URL for phones/tablets.
+
+            **Technical users:** `pip install -r requirements.txt && python run.py`
+            or double-click `start.bat` / `./start.sh`.

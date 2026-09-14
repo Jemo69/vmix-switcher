@@ -658,6 +658,19 @@ input:checked + .slider:before {
   color: #fff;
 }
 
+.btn-ftb.active {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+  border-color: #f87171 !important;
+  box-shadow: 0 0 16px rgba(220, 38, 38, 0.9), inset 0 0 6px rgba(255, 255, 255, 0.4) !important;
+  animation: ftb-pulse 1.2s infinite ease-in-out;
+}
+
+@keyframes ftb-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(0.97); }
+}
+
 .trans-select-wrapper {
   flex: 1;
 }

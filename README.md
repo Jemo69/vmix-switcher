@@ -1,62 +1,44 @@
 # 🎬 vMix Web Switcher (Python)
 
-A modern, high-contrast, responsive web switcher for **vMix live video production software** powered by **Python (FastAPI & WebSockets)**. Designed for smartphones, tablets (iPads/Android), laptops, and touchscreens across your local network.
+A modern, high-contrast, responsive web switcher for **vMix live video production software** — powered by **Python (FastAPI + WebSockets)**. Control your live show from phones, tablets (iPad/Android), laptops, and touchscreens on your local network.
+
+- 🔴 Instant source buttons with live tally (Red = Program/Live, Green = Preview)
+- ⚡ Direct-to-Program switching with your default transition (Fade, Cut, Zoom, …)
+- 👁️ Hide auxiliary inputs (audio, overlays, test patterns) without touching vMix
+- 📱 Touch-optimized with haptics + click sounds, ⌨️ shortcuts (`1`–`9`, `Space`, `Enter`)
+- 🔄 Real-time sync across all crew devices via WebSocket
+- 📡 Offline Simulator mode for rehearsal without vMix
 
 ---
 
-## ✨ Features
+## ✅ Pick your path (30 seconds)
 
-- 🔴 **Instant Numbered Source Buttons**: Clean, responsive tactile buttons for each numbered source with live tally status (Red for Program/Live, Green for Preview).
-- ⚡ **Direct Transition to Main Output**: When a source button is pressed, it automatically transitions directly to the main display / Program output using your configured default transition (e.g., Fade 500ms, Cut, Zoom, Wipe, Transition 1–4).
-- 👁️ **App-Side Source Ignore / Filtering**: Easily hide/ignore auxiliary or background inputs (audio buses, lower thirds, test patterns, overlays) from the switcher interface without modifying or deleting anything in vMix!
-- 🔒 **Password Protected**: Network security ensures only authorized operators on the local network can access and switch.
-- 📱 **Mobile & Tablet Optimized**: Low-latency touch buttons with haptic vibration feedback, studio sound clicks, and adaptive layouts.
-- 🔄 **Real-Time Tallies via WebSocket**: Instant sub-50ms synchronization across all connected crew devices simultaneously.
-- ⌨️ **Keyboard Shortcuts**: Use keys `1`–`9` to switch sources, `Space` for Auto/Fade transition, and `Enter` for Cut.
-- 🎛️ **Dual Switching Modes**:
-  - **Direct Switch Mode (Default)**: Pressing an input immediately transitions it to the main display.
-  - **Preview + Take Mode**: Traditional broadcast mode staging the source in Preview first, then using CUT or AUTO.
-- 📡 **Offline Simulator / Demo Mode**: Built-in vMix simulator allowing full testing of transitions, tallies, and source filtering even when vMix is not running!
+| Who you are | What to do |
+|---|---|
+| **Non-technical (easiest — no Python)** | Download the ready-made app from [**Releases**](https://github.com/Jemo69/vmix-switcher/releases) → double-click → done. See [Option A](#option-a--easiest-download-the-ready-made-app-no-python-needed-recommended-for-non-technical-users). |
+| **Semi-technical (have Python)** | Double-click **`start.bat`** (Windows) or run **`./start.sh`** (macOS/Linux). See [Option B](#option-b--one-click-script-needs-python-once). |
+| **Technical / developer** | Clone, `pip install`, `python run.py`. See [Option C](#option-c--technical-manual-install). |
+
+> **First: enable vMix Web Controller** (all options need this once):
+> 1. Open **vMix** → **Settings** (gear, top right) → **Web Controller** → check **Enabled**.
+> 2. Note the port (default `8088`).
 
 ---
 
-## 🚀 Quick Start
+## Option A — Easiest: download the ready-made app (no Python needed) ⭐ Recommended for non-technical users
 
-### Prerequisites
-- [Python 3.9+](https://www.python.org/)
-- [vMix](https://www.vmix.com/) (running on Windows).
-
-### 1. Enable Web Controller in vMix
-1. Open **vMix** on your computer.
-2. Go to **Settings** (top right gear icon) > **Web Controller**.
-3. Check **Enabled**.
-4. Note the port (default is `8088`).
-
-### 2. Start the Switcher
-
-#### On Windows (vMix PC):
-- Double-click **`start.bat`**, or run in Command Prompt:
-  ```cmd
-  pip install -r requirements.txt
-  python run.py
-  ```
-
-#### On Linux / macOS:
-- Run:
-  ```bash
-  chmod +x start.sh
-  ./start.sh
-  ```
-  or:
-  ```bash
-  pip install -r requirements.txt
-  python3 run.py
-  ```
-
-Once started, the console displays:
+1. Go to [**Releases**](https://github.com/Jemo69/vmix-switcher/releases) and download the file for your computer:
+   - Windows → `vmix-switcher-windows.exe`
+   - macOS → `vmix-switcher-macos`
+   - Linux → `vmix-switcher-linux`
+2. Run it:
+   - **Windows:** double-click the `.exe`. If SmartScreen warns, click *More info → Run anyway* (it's your own unsigned build).
+   - **macOS:** first time only — right-click the file → **Open** → **Open** (this bypasses Gatekeeper for unsigned apps). If blocked: *System Settings → Privacy & Security → Open Anyway*. You may need `chmod +x vmix-switcher-macos` if downloaded via browser.
+   - **Linux:** `chmod +x vmix-switcher-linux && ./vmix-switcher-linux`
+3. A black window opens showing your URLs, e.g.:
 ```text
 =============================================================
-       🎬 vMix Web Switcher (Python) is Running!             
+       🎬 vMix Web Switcher (Python) is Running!
 =============================================================
  Local Computer URL:   http://localhost:3000
  Network Device Access (Tablets, Phones, Laptops):
@@ -67,61 +49,149 @@ Once started, the console displays:
  Default Transition:   Fade (500ms)
 =============================================================
 ```
+4. **Keep that window open** while switching. Open `http://localhost:3000` on the vMix PC, or the `http://192.168.x.x:3000` address on crew phones/tablets (same Wi-Fi). Password: `vmix`.
 
-### 3. Connect from Phones / Tablets / Laptops
-1. Connect your phone or tablet to the **same Wi-Fi network** as the vMix computer.
-2. Open a web browser (Safari, Chrome, etc.) and enter the network URL (e.g., `http://192.168.1.50:3000`).
-3. Enter the password:
-   - **Default Password:** `vmix`
+> 💡 **Updating:** download the new Release file and replace the old one. Your settings live in `config.json` *next to* the app, so they survive updates.
 
 ---
 
-## 🎛️ How to Use
+## Option B — One-click script (needs Python once)
 
-### Switching Sources
-- **Direct Switch**: Tap any source button to transition that input directly to the Program output.
-- **Change Default Transition**: Use the transition dropdown at the top center to choose between `Fade`, `Cut`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Transition 1`, or `Transition 2`.
-- **Manual Cut & Auto**: Use the dedicated **CUT** and **AUTO** buttons for immediate transitions between Preview and Program.
+Good when Releases aren't built yet, or you want the latest source.
 
-### Ignoring Sources (App-Side Hiding)
-1. Click **Manage Sources** in the top navigation bar.
-2. You will see a list of all inputs detected from vMix.
-3. Toggle off **Display on Switcher** for any source you want to hide (e.g., audio inputs, color bars, or background graphics).
-4. Optionally enter a custom **Display Nickname** to give inputs clear labels on your switcher buttons without altering presets in vMix.
-5. Ignored sources are saved on the app server and instantly hidden from all connected switcher devices.
+**Prerequisite (once):** install [Python 3.11+](https://www.python.org/downloads/) and ✅ check **"Add python.exe to PATH"** on Windows.
 
-### Settings & Customization
-Click the **Settings** gear icon in the top header to configure:
-- **Switcher Action**: Switch between *Direct to Program* and *Preview + Take*.
-- **Default Transition & Duration**: Adjust transition speed (e.g. 250ms, 500ms, 1000ms).
-- **Target vMix Host & Port**: Connect to vMix on `127.0.0.1:8088` or a remote vMix machine on your LAN.
-- **Change Password**: Set a new access password for crew members.
-- **Offline Simulator Mode**: Turn on mock mode to test inputs and switching without vMix open.
+- **Windows:** double-click **`start.bat`**. It installs dependencies, opens your browser, and starts the server.
+- **macOS / Linux:** open a terminal in this folder, then:
+  ```bash
+  chmod +x start.sh
+  ./start.sh
+  ```
+
+Then open `http://localhost:3000` (PC) or the network URL shown in the console (phones/tablets). Password: `vmix`.
 
 ---
 
-## 📁 Python Project Architecture
+## Option C — Technical: manual install
+
+```bash
+git clone https://github.com/Jemo69/vmix-switcher.git
+cd vmix-switcher
+pip install -r requirements.txt
+python run.py        # or: python3 run.py
+```
+
+Open `http://localhost:3000`. Run tests with:
+
+```bash
+python -m pytest test/ -v
+# or: python test/test_python_switcher.py
+```
+
+---
+
+## 📲 Connect crew devices (all options)
+
+1. Connect phones/tablets to the **same Wi-Fi** as the vMix computer.
+2. In their browser, enter the network URL from the console (e.g. `http://192.168.1.50:3000`).
+3. Enter password (default `vmix`, changeable in Settings ⚙️).
+
+> 🧱 **Windows Firewall on first run?** Click *Allow access* so tablets/phones can reach the app. If devices can't connect, verify: same Wi-Fi (not guest network), firewall allows port `3000`, and no VPN is isolating the PC.
+
+---
+
+## 🎛️ How to use
+
+- **Direct Switch (default):** tap a source → it transitions straight to Program output.
+- **Change transition:** dropdown at top center (`Fade`, `Cut`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Transition 1/2` + duration).
+- **Preview + Take mode:** Settings ⚙️ → *Switcher Action* → stage in Preview, then **CUT** / **AUTO**.
+- **Hide sources:** *Manage Sources* → toggle off *Display on Switcher* (e.g. audio, color bars). Optional **Display Nickname** per input.
+- **Settings ⚙️:** switcher mode, default transition + duration, vMix host/port, password, poll interval, **Offline Simulator Mode** (rehearse without vMix).
+
+---
+
+## 🔧 Configuration
+
+Settings persist in `config.json`:
+- Source/script runs → `<repo>/config.json`
+- Standalone exe/app → `config.json` **next to the executable**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `port` | `3000` | Web UI port |
+| `password` | `vmix` | Crew login |
+| `vmixHost` / `vmixPort` | `127.0.0.1` / `8088` | Where vMix Web Controller lives |
+| `defaultTransition` / `transitionDuration` | `Fade` / `500` | Transition + ms |
+| `switcherMode` | `direct` | `direct` or `preview_take` |
+| `mockMode` | `false` | Simulator when vMix is offline |
+
+---
+
+## 📦 Build the executable yourself
+
+You don't need this if you downloaded from Releases — this is for maintainers/developers.
+
+```bash
+pip install -r requirements.txt -r requirements-build.txt
+python build_exe.py
+# Output: dist/vmix-switcher-windows.exe  (or -macos / -linux on those OSes)
+```
+
+Flags: `--onedir` (folder build, faster startup) · `--debug` (verbose logs).
+
+### 🚀 Publish a new Release (maintainer, 2 commands)
+
+Binaries build automatically via GitHub Actions when you push a version tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Then check the **Actions** tab → **Build Release Binaries** → once green, the files appear under **Releases** for the crew to download. You can also trigger a test build anytime from *Actions → Run workflow* without tagging.
+
+---
+
+## ❓ Troubleshooting / FAQ
+
+| Problem | Fix |
+|---|---|
+| `Python is not installed` (start.bat/sh) | Install Python 3.11+ from python.org; on Windows re-install with **Add to PATH** checked. |
+| Port `3000` already in use | Close the other copy, or edit `port` in `config.json` and restart. |
+| Phones can't reach the page | Same Wi-Fi? Firewall allowed? Right IP from console? No client-isolation/guest Wi-Fi? |
+| `Can't connect to vMix` in UI | vMix open? Web Controller enabled on port `8088`? `vmixHost` correct in Settings? Try Simulator Mode to confirm the app itself works. |
+| macOS says app is damaged / can't open | Right-click → Open (once), or *Privacy & Security → Open Anyway*. |
+| SmartScreen warning (Windows exe) | *More info → Run anyway*. Expected for unsigned self-builds. |
+| Want a fresh password/secret | Settings ⚙️ → change password (min 3 chars). |
+
+---
+
+## 📁 Project structure
 
 ```
-vmix-swicther/
-├── config.json              # Persistent settings (password, ignored inputs, transitions)
-├── requirements.txt         # Python dependencies (fastapi, uvicorn, websockets)
-├── run.py                   # Python entry point launcher with auto-dependency check
-├── server.py                # FastAPI REST API + WebSocket real-time tally broadcaster
+vmix-switcher/
+├── config.json              # Persistent settings (created/updated on first run)
+├── requirements.txt         # Runtime deps (fastapi, uvicorn, websockets)
+├── requirements-build.txt   # Build-only dep (pyinstaller)
+├── run.py                   # Entry point (dev + PyInstaller target)
+├── server.py                # FastAPI REST API + WebSocket tally broadcaster
+├── build_exe.py             # Cross-platform PyInstaller build (win/mac/linux)
 ├── start.bat                # Windows one-click launcher
-├── start.sh                 # Linux/macOS launcher
+├── start.sh                 # macOS/Linux one-click launcher
+├── .github/workflows/build-release.yml  # Auto-builds exe/app on version tags
 ├── vmix/
 │   ├── __init__.py
-│   ├── config.py            # Settings persistence & token generator
+│   ├── config.py            # Settings persistence (exe-aware path)
 │   ├── mock.py              # Offline broadcast simulator
 │   └── client.py            # vMix HTTP XML API poller & switching engine
 ├── public/
 │   ├── index.html           # Responsive broadcast UI
-│   ├── css/
-│   │   └── style.css        # Broadcast dark theme & tally styling
-│   └── js/
-│       ├── api.js           # Client-side API wrapper & auth management
-│       └── app.js           # Switcher controller, WebSocket client & haptics
+│   ├── css/style.css
+│   └── js/ (api.js, app.js)
 └── test/
-    └── test_python_switcher.py # Python integration test suite
+    └── test_python_switcher.py
 ```
+
+## 🤝 Contributing
+
+PRs welcome — open an issue first for big changes. Keep the non-technical path working: if you touch startup/config, verify both `python run.py` **and** the PyInstaller binary still boot and serve `public/`.

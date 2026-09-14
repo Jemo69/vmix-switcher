@@ -106,8 +106,13 @@ class SwitcherApp {
         if (this.dom.settingShowThumbnails) {
           this.dom.settingShowThumbnails.checked = this.showThumbnails;
         }
+        if (this.showThumbnails) {
+          this.startThumbnailRefresh();
+        } else {
+          this.stopThumbnailRefresh();
+        }
         if (this.currentState) {
-          this.renderSourcesGrid(this.currentState.visibleInputs || []);
+          this.renderSourcesGrid(this.currentState.visibleInputs || [], true);
         }
       });
     }
@@ -274,6 +279,7 @@ class SwitcherApp {
   async start() {
     await this.loadConfig();
     this.connectWebSocket();
+    this.startThumbnailRefresh();
   }
 
   async loadConfig() {
@@ -363,9 +369,33 @@ class SwitcherApp {
   stopWebSocket() {
     clearInterval(this.pingTimer);
     if (this.wsReconnectTimer) clearTimeout(this.wsReconnectTimer);
+    this.stopThumbnailRefresh();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
+    }
+  }
+
+  startThumbnailRefresh() {
+    this.stopThumbnailRefresh();
+    if (!this.showThumbnails) return;
+    this.thumbTimer = setInterval(() => {
+      if (!this.showThumbnails || this.dom.appContainer.classList.contains('hidden')) return;
+      const imgs = this.dom.sourcesGrid.querySelectorAll('.source-thumb-img');
+      const now = Date.now();
+      imgs.forEach(img => {
+        const inputNum = img.getAttribute('data-thumb-input');
+        if (inputNum) {
+          img.src = `${API.getThumbnailUrl(inputNum)}&_t=${now}`;
+        }
+      });
+    }, 2000);
+  }
+
+  stopThumbnailRefresh() {
+    if (this.thumbTimer) {
+      clearInterval(this.thumbTimer);
+      this.thumbTimer = null;
     }
   }
 
@@ -396,6 +426,13 @@ class SwitcherApp {
     this.dom.recBadge.className = `badge-indicator ${state.recording ? 'active rec' : 'inactive'}`;
     this.dom.streamBadge.className = `badge-indicator ${state.streaming ? 'active stream' : 'inactive'}`;
     this.dom.fullscreenBadge.className = `badge-indicator ${state.fullscreen ? 'active fullscreen' : 'inactive'}`;
+
+    // FTB Button active indicator
+    if (this.dom.btnFtb) {
+      const isFtb = Boolean(state.fadeToBlack);
+      this.dom.btnFtb.classList.toggle('active', isFtb);
+      this.dom.btnFtb.textContent = isFtb ? 'FTB ON' : 'FTB';
+    }
 
     // Active (Program) & Preview monitors
     const activeInput = state.allInputs?.find(i => i.isActive);
@@ -438,7 +475,7 @@ class SwitcherApp {
   }
 
   // Main Switcher Grid Render
-  renderSourcesGrid(inputs) {
+  renderSourcesGrid(inputs, forceRebuild = false) {
     if (!inputs || inputs.length === 0) {
       const isOffline = this.currentState && !this.currentState.connected && !this.currentState.isMock;
       if (isOffline) {
@@ -475,6 +512,49 @@ class SwitcherApp {
       return;
     }
 
+    // Check if we can do an in-place update without wiping the DOM
+    const existingCards = this.dom.sourcesGrid.querySelectorAll('.source-card');
+    const existingNums = Array.from(existingCards).map(c => c.getAttribute('data-input'));
+    const newNums = inputs.map(i => String(i.number));
+
+    const canUpdateInPlace = !forceRebuild &&
+      existingNums.length === newNums.length &&
+      existingNums.every((val, idx) => val === newNums[idx]);
+
+    if (canUpdateInPlace) {
+      existingCards.forEach((card, idx) => {
+        const inp = inputs[idx];
+        card.classList.toggle('is-program', Boolean(inp.isActive));
+        card.classList.toggle('is-preview', Boolean(inp.isPreview));
+
+        let tallyText = 'STANDBY';
+        if (inp.isActive) tallyText = 'PROGRAM / LIVE';
+        else if (inp.isPreview) tallyText = 'PREVIEW';
+        const tallyStatusEl = card.querySelector('.tally-status-text');
+        if (tallyStatusEl && tallyStatusEl.textContent !== tallyText) {
+          tallyStatusEl.textContent = tallyText;
+        }
+
+        const title = inp.customTitle || inp.shortTitle || inp.title;
+        const titleEl = card.querySelector('.source-title-main');
+        if (titleEl && titleEl.textContent !== title) {
+          titleEl.textContent = title;
+        }
+
+        const badgesRightEl = card.querySelector('.source-badges-right');
+        if (badgesRightEl) {
+          const overlayHtml = (inp.activeOverlays || []).map(ov => `<span class="overlay-mini-badge">OV${ov}</span>`).join('');
+          const audioMuteHtml = inp.muted ? `<span class="audio-mute-badge" title="Muted"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg></span>` : '';
+          const typeHtml = `<span class="source-type-pill">${this.escapeHtml(inp.type || 'Input')}</span>`;
+          const newBadgesHtml = overlayHtml + audioMuteHtml + typeHtml;
+          if (badgesRightEl.innerHTML !== newBadgesHtml) {
+            badgesRightEl.innerHTML = newBadgesHtml;
+          }
+        }
+      });
+      return;
+    }
+
     // Render cards efficiently
     const fragment = document.createDocumentFragment();
 
@@ -493,7 +573,7 @@ class SwitcherApp {
 
       const thumbHtml = this.showThumbnails ? `
         <div class="source-thumb-container">
-          <img class="source-thumb-img" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">
+          <img class="source-thumb-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">
         </div>
       ` : '';
 
@@ -555,6 +635,11 @@ class SwitcherApp {
   }
 
   renderManageSourcesTable() {
+    // Do not overwrite table if user is currently typing in an input inside the table
+    if (document.activeElement && this.dom.manageSourcesTableBody && this.dom.manageSourcesTableBody.contains(document.activeElement)) {
+      return;
+    }
+
     const allInputs = this.currentState?.allInputs || [];
     const filter = this.sourceSearchFilter;
 
@@ -629,6 +714,12 @@ class SwitcherApp {
     });
 
     this.dom.manageSourcesTableBody.querySelectorAll('.alias-edit-input').forEach(inputField => {
+      inputField.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          inputField.blur();
+        }
+      });
       inputField.addEventListener('blur', async (e) => {
         const inputNum = e.target.dataset.input;
         const newAlias = e.target.value.trim();

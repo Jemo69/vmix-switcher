@@ -1,17 +1,26 @@
 @echo off
+REM ===================================================
+REM  vMix Web Switcher - One-click launcher (Windows)
+REM  Non-technical: just double-click this file.
+REM  It checks Python, installs what's missing, opens
+REM  the browser, and starts the switcher.
+REM ===================================================
 title vMix Web Switcher (Python)
-echo ===================================================
-echo       vMix Web Switcher Launcher (Python)
-echo ===================================================
-echo.
+cd /d "%~dp0"
 
+REM --- Find Python ---
 where python >nul 2>nul
 if %errorlevel% neq 0 (
     where py >nul 2>nul
     if %errorlevel% neq 0 (
-        echo [ERROR] Python 3 is not installed!
-        echo Please download and install Python from https://www.python.org/
-        echo (Make sure to check "Add Python to PATH" during installation)
+        echo.
+        echo  [ERROR] Python 3 is not installed!
+        echo.
+        echo  Please install it first (free, 2 minutes):
+        echo    1. Go to https://www.python.org/downloads/
+        echo    2. Download Python 3.11 or newer
+        echo    3. IMPORTANT: check "Add python.exe to PATH" during install
+        echo    4. Then double-click start.bat again
         echo.
         pause
         exit /b 1
@@ -21,13 +30,28 @@ if %errorlevel% neq 0 (
     set PY_CMD=python
 )
 
-echo Checking Python packages...
-%PY_CMD% -m pip install -r requirements.txt --quiet
+echo  Checking Python packages (first run takes a minute)...
+%PY_CMD% -m pip install -r requirements.txt --quiet --disable-pip-version-check
 if %errorlevel% neq 0 (
-    echo [WARNING] Pip install had warnings, continuing...
+    echo  [WARNING] Pip install had warnings, continuing anyway...
 )
 
-echo Starting vMix Web Switcher...
-start "" http://localhost:3000
+echo.
+echo  Starting vMix Web Switcher...
+echo  The app will open at http://localhost:3000
+echo  Keep this window open while using the switcher.
+echo.
+
+REM Open browser after a short delay so the server is up
+start "" /min cmd /c "timeout /t 4 /nobreak >nul & start "" http://localhost:3000"
+
 %PY_CMD% run.py
+if %errorlevel% neq 0 (
+    echo.
+    echo  [ERROR] The switcher stopped with an error.
+    echo  Common fixes:
+    echo   - Port 3000 in use? Close the other copy and retry.
+    echo   - No internet on first run? pip needs it once to download packages.
+    echo.
+)
 pause
