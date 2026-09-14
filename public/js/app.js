@@ -761,18 +761,38 @@ class SwitcherApp {
     this.dom.prvNumber.textContent = previewNum || '--';
     this.dom.prvName.textContent = previewTitle;
 
-    // Update Live Monitor Images
+    // Update Live Monitor Images — steady-state refresh is owned by the
+    // thumbnail interval loop (with visibility + load gating). Here we only
+    // touch the <img> when the routed input number actually changed, so a
+    // state broadcast every ~300ms doesn't restart every image download and
+    // hammer vMix into timeouts (which used to fall back to SVG placeholders).
     const now = Date.now();
-    if (this.dom.pgmMonitorImg) {
-      this.dom.pgmMonitorImg.src = `${API.getThumbnailUrl(activeNum)}&_t=${now}`;
+    if (activeNum !== this.lastMonitoredActive) {
+      this.lastMonitoredActive = activeNum;
+      [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => {
+        if (!img) return;
+        img.dataset.thumbLoading = '0';
+        img.setAttribute('data-thumb-input', activeNum);
+        img.src = `${API.getThumbnailUrl(activeNum)}&_t=${now}`;
+      });
+    } else {
+      [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => {
+        if (img && !img.getAttribute('data-thumb-input')) img.setAttribute('data-thumb-input', activeNum);
+      });
     }
-    if (this.dom.prvMonitorImg) {
-      this.dom.prvMonitorImg.src = `${API.getThumbnailUrl(previewNum)}&_t=${now}`;
+    if (previewNum !== this.lastMonitoredPreview) {
+      this.lastMonitoredPreview = previewNum;
+      [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => {
+        if (!img) return;
+        img.dataset.thumbLoading = '0';
+        img.setAttribute('data-thumb-input', previewNum);
+        img.src = `${API.getThumbnailUrl(previewNum)}&_t=${now}`;
+      });
+    } else {
+      [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => {
+        if (img && !img.getAttribute('data-thumb-input')) img.setAttribute('data-thumb-input', previewNum);
+      });
     }
-
-    // Update Multiviewer Big Screens
-    if (this.dom.mvPgmImg) this.dom.mvPgmImg.src = `${API.getThumbnailUrl(activeNum)}&_t=${now}`;
-    if (this.dom.mvPrvImg) this.dom.mvPrvImg.src = `${API.getThumbnailUrl(previewNum)}&_t=${now}`;
     if (this.dom.mvPgmTitle) this.dom.mvPgmTitle.textContent = activeTitle;
     if (this.dom.mvPrvTitle) this.dom.mvPrvTitle.textContent = previewTitle;
     if (this.dom.mvPgmNum) this.dom.mvPgmNum.textContent = activeNum || '--';

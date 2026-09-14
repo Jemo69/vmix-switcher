@@ -360,7 +360,10 @@ class VMixClient:
 
     def _thumb_cache_ttl(self) -> float:
         fps = self._preview_fps()
-        return min(0.5, max(0.04, 0.25 / fps))
+        # Cache long enough to coalesce the burst of frontend requests
+        # (program monitor + corner hero + grid tile all ask for the same
+        # input within the same tick), but short enough to stay "live".
+        return min(2.0, max(0.10, 0.9 / fps))
 
     def _preview_fps(self) -> float:
         try:
@@ -368,6 +371,20 @@ class VMixClient:
         except (TypeError, ValueError):
             fps = 4.0
         return min(10.0, max(0.5, fps))
+
+    @staticmethod
+    def _sniff_image_mime(data: bytes) -> Optional[str]:
+        if not data or len(data) < 4:
+            return None
+        if data[:2] == b"\xff\xd8":
+            return "image/jpeg"
+        if data[:8] == b"\x89PNG\r\n\x1a\n":
+            return "image/png"
+        if data[:6] in (b"GIF87a", b"GIF89a"):
+            return "image/gif"
+        if data[:4] in (b"RIFF",) and len(data) > 12 and data[8:12] == b"WEBP":
+            return "image/webp"
+        return None
 
     async def _load_thumbnail(self, target_id: Any, cache_key: str) -> tuple[bytes, str]:
         now = time.time()
@@ -385,9 +402,13 @@ class VMixClient:
         url = f"http://{host}:{port}/Thumbnail.aspx?{param_name}={urllib.parse.quote(str(target_id))}"
 
         try:
-            raw_bytes = await asyncio.to_thread(self._fetch_binary, url, max(0.8, 2.0 / self._preview_fps()))
-            self._thumb_cache[cache_key] = (now, raw_bytes, "image/jpeg")
-            return raw_bytes, "image/jpeg"
+            timeout = max(2.0, 4.0 / self._preview_fps())
+            raw_bytes = await asyncio.to_thread(self._fetch_binary, url, timeout)
+            mime = self._sniff_image_mime(raw_bytes)
+            if mime is None:
+                raise RuntimeError("vMix returned non-image bytes for thumbnail")
+            self._thumb_cache[cache_key] = (now, raw_bytes, mime)
+            return raw_bytes, mime
         except Exception:
             cached = self._thumb_cache.get(cache_key)
             if cached:
