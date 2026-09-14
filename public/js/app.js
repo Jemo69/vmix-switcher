@@ -75,8 +75,11 @@ class SwitcherApp {
       audioMuteAllBtn: document.getElementById('audio-mute-all-btn'),
       audioLiveAllBtn: document.getElementById('audio-live-all-btn'),
 
-      // Big Screen Multiviewer
+      // Big Screen Multiviewer / Preview Mode
       multiviewClock: document.getElementById('multiview-clock'),
+      multiviewWallGrid: document.getElementById('multiview-wall-grid'),
+      cornerPosLeftBtn: document.getElementById('corner-pos-left-btn'),
+      cornerPosRightBtn: document.getElementById('corner-pos-right-btn'),
       mvPgmTitle: document.getElementById('mv-pgm-title'),
       mvPrvTitle: document.getElementById('mv-prv-title'),
       mvPgmImg: document.getElementById('mv-pgm-img'),
@@ -196,6 +199,17 @@ class SwitcherApp {
     }
     if (this.dom.mvFullscreenToggleBtn) {
       this.dom.mvFullscreenToggleBtn.addEventListener('click', () => this.toggleFullscreen());
+    }
+
+    // Preview Mode Corner Position Controls
+    const savedCorner = localStorage.getItem('vmix_preview_corner') || 'left';
+    this.setCornerPosition(savedCorner);
+
+    if (this.dom.cornerPosLeftBtn) {
+      this.dom.cornerPosLeftBtn.addEventListener('click', () => this.setCornerPosition('left'));
+    }
+    if (this.dom.cornerPosRightBtn) {
+      this.dom.cornerPosRightBtn.addEventListener('click', () => this.setCornerPosition('right'));
     }
 
     // Audio Master Actions
@@ -475,6 +489,17 @@ class SwitcherApp {
         document.exitFullscreen().catch(() => {});
       }
     }
+  }
+
+  setCornerPosition(pos) {
+    const isRight = pos === 'right';
+    if (this.dom.multiviewWallGrid) {
+      this.dom.multiviewWallGrid.classList.toggle('corner-right', isRight);
+      this.dom.multiviewWallGrid.classList.toggle('corner-left', !isRight);
+    }
+    if (this.dom.cornerPosLeftBtn) this.dom.cornerPosLeftBtn.classList.toggle('active', !isRight);
+    if (this.dom.cornerPosRightBtn) this.dom.cornerPosRightBtn.classList.toggle('active', isRight);
+    localStorage.setItem('vmix_preview_corner', isRight ? 'right' : 'left');
   }
 
   startClock() {
@@ -1012,13 +1037,13 @@ class SwitcherApp {
     }
   }
 
-  // ==================== BIG SCREEN MULTIVIEWER ====================
+  // ==================== BIG SCREEN MULTIVIEWER / PREVIEW MODE ====================
   renderMultiviewGrid(inputs) {
     if (!this.dom.multiviewCamsGrid) return;
     if (!inputs || inputs.length === 0) {
       this.dom.multiviewCamsGrid.innerHTML = `
         <div class="loading-placeholder">
-          <p>No multiview camera inputs.</p>
+          <p>No multiview camera inputs detected.</p>
         </div>
       `;
       return;
@@ -1036,6 +1061,13 @@ class SwitcherApp {
         const inp = inputs[idx];
         tile.classList.toggle('is-program', Boolean(inp.isActive));
         tile.classList.toggle('is-preview', Boolean(inp.isPreview));
+
+        const statusPill = tile.querySelector('.mv-cam-status-pill');
+        if (statusPill) {
+          statusPill.className = `mv-cam-status-pill ${inp.isActive ? 'live' : (inp.isPreview ? 'prv' : '')}`;
+          statusPill.textContent = inp.isActive ? 'ON AIR' : (inp.isPreview ? 'NEXT' : '');
+        }
+
         const titleEl = tile.querySelector('.mv-cam-title');
         const title = inp.customTitle || inp.shortTitle || inp.title;
         if (titleEl && titleEl.textContent !== title) {
@@ -1056,10 +1088,30 @@ class SwitcherApp {
       tile.innerHTML = `
         <img class="mv-cam-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">
         <span class="mv-cam-badge">CAM ${inp.number}</span>
+        <span class="mv-cam-status-pill ${inp.isActive ? 'live' : (inp.isPreview ? 'prv' : '')}">${inp.isActive ? 'ON AIR' : (inp.isPreview ? 'NEXT' : '')}</span>
+        <div class="mv-cam-take-action">
+          <button type="button" class="mv-take-live-btn" data-input="${inp.number}">⚡ Put Live in Corner</button>
+        </div>
         <div class="mv-cam-title">${this.escapeHtml(title)}</div>
       `;
 
-      tile.addEventListener('click', () => this.handleSourceClick(inp));
+      // Click card or "Put Live" button to switch and put into the corner
+      tile.addEventListener('click', () => {
+        this.vibrate();
+        this.playTone(850, 0.04);
+        API.switchInput(inp.number);
+      });
+
+      const takeBtn = tile.querySelector('.mv-take-live-btn');
+      if (takeBtn) {
+        takeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.vibrate();
+          this.playTone(850, 0.04);
+          API.switchInput(inp.number);
+        });
+      }
+
       fragment.appendChild(tile);
     });
 

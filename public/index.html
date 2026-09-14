@@ -70,7 +70,7 @@
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
             <path d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z"/>
           </svg>
-          <span>Big Screen Preview</span>
+          <span>Preview Mode</span>
         </button>
       </nav>
 
@@ -250,71 +250,71 @@
       </div>
     </div>
 
-    <!-- ==================== VIEW 3: BIG SCREEN PREVIEW (MULTIVIEWER) ==================== -->
+    <!-- ==================== VIEW 3: PREVIEW MODE (LIVE SOURCES WALL) ==================== -->
     <div id="view-multiview" class="view-panel hidden">
       <div class="multiview-header">
-        <div class="multiview-clock-card">
-          <span class="mv-card-label">PRODUCTION CLOCK</span>
-          <span id="multiview-clock" class="mv-card-val">00:00:00</span>
+        <div class="multiview-title-group">
+          <h3>📺 Preview Mode</h3>
+          <p class="multiview-subtitle">All sources displayed live • The big corner monitor shows what is currently live on air</p>
         </div>
-        <div class="multiview-status-center">
-          <div class="mv-banner-chip pgm">
-            <span class="live-dot-pulse"></span>
-            <span>PROGRAM: <strong id="mv-pgm-title">None</strong></span>
+
+        <div class="multiview-controls-group">
+          <div class="multiview-clock-card">
+            <span class="mv-card-label">PRODUCTION CLOCK</span>
+            <span id="multiview-clock" class="mv-card-val">00:00:00</span>
           </div>
-          <div class="mv-banner-chip prv">
-            <span class="preview-dot-indicator"></span>
-            <span>PREVIEW: <strong id="mv-prv-title">None</strong></span>
+
+          <div class="corner-position-pills">
+            <button type="button" id="corner-pos-left-btn" class="corner-pill-btn active" title="Place Live Screen in Top-Left Corner">
+              ↖ Corner: Left
+            </button>
+            <button type="button" id="corner-pos-right-btn" class="corner-pill-btn" title="Place Live Screen in Top-Right Corner">
+              ↗ Corner: Right
+            </button>
           </div>
-        </div>
-        <div class="multiview-actions">
-          <button id="mv-fullscreen-toggle-btn" class="btn btn-secondary btn-sm">
-            ⛶ Fullscreen Display
+
+          <button id="mv-fullscreen-toggle-btn" class="btn btn-primary btn-sm">
+            ⛶ Fullscreen Wall
           </button>
         </div>
       </div>
 
-      <!-- Giant Twin Program & Preview Screens -->
-      <div class="multiview-twin-screens">
-        <div class="big-monitor-box program">
-          <div class="big-monitor-header">
-            <span class="live-dot-pulse"></span>
-            <span>PROGRAM / LIVE</span>
-          </div>
-          <div class="big-monitor-canvas">
-            <img id="mv-pgm-img" class="big-monitor-img" alt="Program Output" />
-            <div class="big-monitor-footer pgm">
-              <span id="mv-pgm-num" class="big-monitor-num">--</span>
-              <span id="mv-pgm-name" class="big-monitor-name">No Active Program</span>
-              <span class="big-monitor-pill pgm">ON AIR</span>
+      <!-- Live Video Wall with Corner Live Hero Screen -->
+      <div class="multiview-wall-viewport">
+        <div id="multiview-wall-grid" class="multiview-wall-grid corner-left">
+
+          <!-- The Biggest One in the Corner: Live Program Monitor -->
+          <div id="mv-corner-hero" class="preview-corner-hero">
+            <div class="corner-hero-header">
+              <div class="corner-header-left">
+                <span class="live-dot-pulse"></span>
+                <span class="corner-hero-tag">LIVE ON AIR (CURRENT OUTPUT)</span>
+              </div>
+              <span class="corner-hero-pill">ON AIR</span>
+            </div>
+            <div class="corner-hero-canvas">
+              <img id="mv-pgm-img" class="corner-hero-img" alt="Currently Live Program" />
+              <div class="corner-hero-footer">
+                <div class="corner-hero-meta">
+                  <span id="mv-pgm-num" class="corner-hero-num">--</span>
+                  <div class="corner-hero-texts">
+                    <span id="mv-pgm-name" class="corner-hero-name">No Active Program</span>
+                    <span class="corner-hero-sub">Currently shown live on air • Tap any source to put it here</span>
+                  </div>
+                </div>
+                <div class="corner-hero-preview-chip">
+                  <span class="chip-label">NEXT:</span>
+                  <span id="mv-prv-name" class="chip-val">None</span>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="big-monitor-box preview">
-          <div class="big-monitor-header">
-            <span class="preview-dot-indicator"></span>
-            <span>PREVIEW (NEXT)</span>
+          <!-- All Sources Displayed Live -->
+          <div id="multiview-cams-grid" class="multiview-cams-grid-sub">
+            <!-- Dynamically populated camera monitor cards -->
           </div>
-          <div class="big-monitor-canvas">
-            <img id="mv-prv-img" class="big-monitor-img" alt="Preview Output" />
-            <div class="big-monitor-footer prv">
-              <span id="mv-prv-num" class="big-monitor-num">--</span>
-              <span id="mv-prv-name" class="big-monitor-name">No Preview</span>
-              <span class="big-monitor-pill prv">NEXT</span>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      <!-- Multiviewer Multi-Camera Grid -->
-      <div class="multiview-cams-wrapper">
-        <div class="multiview-cams-header">
-          <span class="section-title">MULTIVIEW SOURCES (TAP TO SWITCH)</span>
-          <span class="section-sub">Tap any camera to transition or stage in preview</span>
-        </div>
-        <div id="multiview-cams-grid" class="multiview-cams-grid">
-          <!-- Multiviewer tiles generated dynamically -->
         </div>
       </div>
     </div>
