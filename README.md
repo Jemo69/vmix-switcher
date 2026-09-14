@@ -191,6 +191,7 @@ Then check the **Actions** tab → **Build Release Binaries** → once green, th
 | macOS says app is damaged / can't open | Right-click → Open (once), or *Privacy & Security → Open Anyway*. |
 | SmartScreen warning (Windows exe) | *More info → Run anyway*. Expected for unsigned self-builds. |
 | Want a fresh password/secret | Settings ⚙️ → change password (min 3 chars). |
+| vMix pops up "A generic error occurred in GDI+" | Update to v1.3.3+: snapshots are one-at-a-time with auto-pause on errors. Immediate relief: Settings → uncheck *Show Live Video Thumbnails* (stops all snapshot requests). |
 
 ---
 

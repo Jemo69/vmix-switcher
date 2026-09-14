@@ -439,15 +439,16 @@ class SwitcherApp {
       this.dom.methodPreviewBtn.classList.toggle('active', isPreviewTake);
     }
 
+    if (this.dom.currentModeBadge) {
+      this.dom.currentModeBadge.classList.toggle('is-preview-take', isPreviewTake);
+      this.dom.currentModeBadge.classList.toggle('is-direct', !isPreviewTake);
+    }
+
     if (isPreviewTake) {
       this.dom.currentModeBadge.textContent = 'Preview + Take Mode';
-      this.dom.currentModeBadge.style.backgroundColor = 'rgba(16, 185, 129, 0.2)';
-      this.dom.currentModeBadge.style.color = '#6ee7b7';
       this.dom.currentModeDesc.textContent = 'Tapping a source stages it in Preview. Press CUT or AUTO to take.';
     } else {
       this.dom.currentModeBadge.textContent = 'Direct Switch Mode';
-      this.dom.currentModeBadge.style.backgroundColor = 'rgba(59, 130, 246, 0.2)';
-      this.dom.currentModeBadge.style.color = '#93c5fd';
       this.dom.currentModeDesc.textContent = 'Tapping a source transitions it directly to the Main Output.';
     }
   }
@@ -713,6 +714,7 @@ class SwitcherApp {
     const map = {
       live: ['IMG:LIVE', 'is-live', 'Live snapshot from vMix'],
       starting: ['IMG:LOAD', 'is-waiting', detail || 'Requesting snapshots from vMix…'],
+      paused: ['IMG:OFF', 'is-off', detail || 'Snapshots paused — vMix reported save errors'],
       remote: ['IMG:OFF', 'is-off', detail || 'Run the switcher on the vMix PC for live images'],
       offline: ['IMG:OFF', 'is-off', 'vMix offline'],
       mock: ['DEMO', 'is-off', 'Simulator mode — demo graphics'],
@@ -860,13 +862,12 @@ class SwitcherApp {
       const isOffline = this.currentState && !this.currentState.connected && !this.currentState.isMock;
       if (isOffline) {
         this.dom.sourcesGrid.innerHTML = `
-          <div class="loading-placeholder">
-            <div style="font-size: 2.2rem;">📡</div>
-            <h3 style="color: #f87171;">vMix Not Detected at ${this.escapeHtml(this.currentConfig?.vmixHost || '127.0.0.1')}:${this.currentConfig?.vmixPort || 8088}</h3>
-            <p style="max-width: 480px; text-align: center; font-size: 0.9rem; color: var(--text-muted);">
+          <div class="empty-state">
+            <h3 class="empty-title">vMix Not Detected at ${this.escapeHtml(this.currentConfig?.vmixHost || '127.0.0.1')}:${this.currentConfig?.vmixPort || 8088}</h3>
+            <p class="empty-text">
               Make sure vMix is running and the Web Controller is active in <strong>Settings &gt; Web Controller</strong> in vMix.
             </p>
-            <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; justify-content: center;">
+            <div class="empty-actions">
               <button class="btn btn-primary" id="btn-enable-demo">Enable Demo / Simulator Mode</button>
               <button class="btn btn-secondary" id="btn-open-settings-conn">Connection Settings</button>
             </div>
@@ -882,9 +883,12 @@ class SwitcherApp {
       }
 
       this.dom.sourcesGrid.innerHTML = `
-        <div class="loading-placeholder">
-          <p>No visible sources found.</p>
-          <button class="btn btn-secondary btn-sm" id="empty-manage-btn">Manage Sources (Check hidden)</button>
+        <div class="empty-state">
+          <h3 class="empty-title">No visible sources</h3>
+          <p class="empty-text">Every vMix input is hidden from the switcher. Show them again in Manage Sources.</p>
+          <div class="empty-actions">
+            <button class="btn btn-secondary btn-sm" id="empty-manage-btn">Manage Sources</button>
+          </div>
         </div>
       `;
       const btn = document.getElementById('empty-manage-btn');
@@ -1066,7 +1070,7 @@ class SwitcherApp {
             <span class="source-number-badge">${inp.number}</span>
             <div>
               <div class="audio-card-title" title="${this.escapeHtml(title)}">${this.escapeHtml(title)}</div>
-              <div style="font-size: 0.72rem; color: var(--text-dim);">${inp.type || 'Audio'}</div>
+              <div class="audio-card-type">${inp.type || 'Audio'}</div>
             </div>
           </div>
           <button type="button" class="audio-mute-toggle-btn ${isLive ? 'live' : 'muted'}" data-input="${inp.number}">
@@ -1206,7 +1210,7 @@ class SwitcherApp {
         <span class="mv-cam-badge">CAM ${inp.number}</span>
         <span class="mv-cam-status-pill ${inp.isActive ? 'live' : (inp.isPreview ? 'prv' : '')}">${inp.isActive ? 'ON AIR' : (inp.isPreview ? 'NEXT' : '')}</span>
         <div class="mv-cam-take-action">
-          <button type="button" class="mv-take-live-btn" data-input="${inp.number}">⚡ Put Live in Corner</button>
+          <button type="button" class="mv-take-live-btn" data-input="${inp.number}">Put Live in Corner</button>
         </div>
         <div class="mv-cam-title">${this.escapeHtml(title)}</div>
       `;
@@ -1265,7 +1269,7 @@ class SwitcherApp {
     if (filtered.length === 0) {
       this.dom.manageSourcesTableBody.innerHTML = `
         <tr>
-          <td colspan="5" style="text-align: center; color: var(--text-dim); padding: 30px;">
+          <td colspan="5" class="table-empty">
             ${allInputs.length === 0 ? 'No inputs loaded from vMix.' : 'No sources matching search.'}
           </td>
         </tr>
@@ -1281,8 +1285,8 @@ class SwitcherApp {
         <tr class="${isIgnored ? 'row-ignored' : ''}" data-input-row="${inp.number}">
           <td><strong>${inp.number}</strong></td>
           <td>
-            <div style="font-weight: 600;">${this.escapeHtml(inp.title)}</div>
-            <div style="font-size: 0.75rem; color: var(--text-dim);">${this.escapeHtml(inp.shortTitle || '')}</div>
+            <div class="table-title">${this.escapeHtml(inp.title)}</div>
+            <div class="table-sub">${this.escapeHtml(inp.shortTitle || '')}</div>
           </td>
           <td>
             <input type="text"
@@ -1293,7 +1297,7 @@ class SwitcherApp {
             >
           </td>
           <td><span class="source-type-pill">${inp.type || 'Generic'}</span></td>
-          <td style="text-align: center;">
+          <td class="table-center">
             <label class="toggle-switch">
               <input type="checkbox"
                 class="source-ignore-toggle"
@@ -1381,7 +1385,7 @@ class SwitcherApp {
     try {
       const netInfo = await API.getNetworkIps();
       if (!netInfo.ips || netInfo.ips.length === 0) {
-        this.dom.networkIpsList.innerHTML = `<p style="color: var(--text-dim);">No external network interface detected.</p>`;
+        this.dom.networkIpsList.innerHTML = `<p class="network-ip-empty">No external network interface detected.</p>`;
         return;
       }
 
@@ -1400,7 +1404,7 @@ class SwitcherApp {
         });
       });
     } catch (err) {
-      this.dom.networkIpsList.innerHTML = `<p style="color: #ef4444;">Failed to load network addresses</p>`;
+      this.dom.networkIpsList.innerHTML = `<p class="network-ip-error">Failed to load network addresses</p>`;
     }
   }
 

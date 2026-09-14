@@ -10,12 +10,19 @@ from .mock import mock_vmix
 
 class VMixClient:
     # Snapshot budget: vMix renders + JPEG-encodes each SnapshotInput on the
-    # live production PC, so triggers are spaced globally and per input.
-    # Stills converge in seconds; motion inputs refresh every few seconds.
-    SNAP_MIN_ANY_INTERVAL = 1.0    # min seconds between any two snapshot triggers
-    SNAP_MIN_INPUT_INTERVAL = 3.0  # min seconds between snapshots of the same input
-    SNAP_MAX_FILE_AGE = 30.0       # serve files up to this old while revalidating
-    SNAP_SUCCESS_FRESH = 20.0      # file newer than this counts as "live"
+    # live production PC, and overlapping Photo.Save calls to the same file
+    # make vMix pop "A generic error occurred in GDI+" dialogs. So: renders
+    # are serialized behind a lock with a patient timeout (never overlap,
+    # never retry-blind), the rhythm is gentle (stills barely change), and a
+    # circuit breaker pauses all triggers if vMix reports save errors.
+    SNAP_MIN_ANY_INTERVAL = 2.0     # min seconds between any two snapshot triggers
+    SNAP_MIN_MONITOR_INTERVAL = 5.0  # active / preview inputs (what's on air)
+    SNAP_MIN_INPUT_INTERVAL = 15.0   # everything else (stills don't change)
+    SNAP_MAX_FILE_AGE = 60.0        # serve files up to this old while revalidating
+    SNAP_SUCCESS_FRESH = 30.0       # file newer than this counts as "live"
+    SNAP_BREAKER_TRIPS = 3          # consecutive failures before pausing
+    SNAP_BREAKER_PAUSE = 60.0       # pause duration after trips (seconds)
+    SNAP_FUNCTION_TIMEOUT = 12.0    # HTTP timeout: vMix may block while rendering
 
     def __init__(self):
         self.connected = False
@@ -30,9 +37,11 @@ class VMixClient:
         # Live snapshot thumbnails (see _load_thumbnail for rationale)
         self._snap_dir: Optional[str] = None
         self._snap_last_any: float = 0.0
-        self._snap_last_input: Dict[str, float] = {}
+        self._snap_lock = asyncio.Lock()
+        self._snap_fail_streak: int = 0
+        self._snap_paused_until: float = 0.0
         self._snap_last_success: float = 0.0
-        self._thumb_mode: str = "starting"  # live|starting|remote|offline|mock
+        self._thumb_mode: str = "starting"  # live|starting|paused|remote|offline|mock
         self._thumb_detail: str = ""
 
     def add_callback(self, cb: Callable[[Dict[str, Any]], Any]) -> None:
@@ -437,11 +446,12 @@ class VMixClient:
         if mtime > 0 and (now - mtime) <= self.SNAP_SUCCESS_FRESH:
             self._snap_last_success = max(self._snap_last_success, mtime)
 
-        due = (mtime <= 0) or ((now - mtime) > self.SNAP_MIN_INPUT_INTERVAL)
-        if due and (now - self._snap_last_any) >= self.SNAP_MIN_ANY_INTERVAL:
+        paused = now < self._snap_paused_until
+        interval = self.SNAP_MIN_MONITOR_INTERVAL if self._is_monitor_input(key) else self.SNAP_MIN_INPUT_INTERVAL
+        due = (mtime <= 0) or ((now - mtime) > interval)
+        if due and not paused and (now - self._snap_last_any) >= self.SNAP_MIN_ANY_INTERVAL:
             self._snap_last_any = now
-            self._snap_last_input[str(key)] = now
-            asyncio.create_task(self._trigger_snapshot(key, path))
+            asyncio.create_task(self._trigger_snapshot_guarded(key, path))
 
         if mtime > 0 and (now - mtime) <= self.SNAP_MAX_FILE_AGE:
             try:
@@ -457,18 +467,61 @@ class VMixClient:
             except OSError:
                 pass
 
-        self._set_thumb_status("starting", "Requesting first snapshots from vMix…")
         if (now - self._snap_last_success) <= self.SNAP_SUCCESS_FRESH:
             # Another input is already streaming snapshots — don't let one
             # still-converging input hide that from the UI pills.
             self._set_thumb_status("live", "Snapshots refreshing from vMix")
+        elif paused:
+            self._set_thumb_status("paused", self._thumb_detail or "Snapshots paused — vMix reported save errors")
+        else:
+            self._set_thumb_status("starting", "Requesting first snapshots from vMix…")
         return self._svg_bytes(str(target_id))
 
-    async def _trigger_snapshot(self, key: str, path: str) -> None:
+    async def _trigger_snapshot_guarded(self, key: str, path: str) -> None:
+        # One render at a time: overlapping Photo.Save calls to the same file
+        # are what made vMix pop "A generic error occurred in GDI+" dialogs.
+        # The HTTP call itself can block while vMix renders, so wait patiently
+        # instead of timing out early and firing duplicates on top of it.
         try:
-            await self.execute_function("SnapshotInput", {"Input": key, "Value": path})
+            async with self._snap_lock:
+                cfg = config_manager.get()
+                host = cfg.get("vmixHost", "127.0.0.1")
+                port = cfg.get("vmixPort", 8088)
+                query = urllib.parse.urlencode(
+                    {"Function": "SnapshotInput", "Input": key, "Value": path}
+                )
+                url = f"http://{host}:{port}/api/?{query}"
+                await asyncio.to_thread(self._fetch_url, url, self.SNAP_FUNCTION_TIMEOUT)
         except Exception as err:
-            self._set_thumb_status("starting", f"Snapshot failed: {err}")
+            self._record_snap_failure(f"Snapshot failed: {err}")
+        else:
+            self._record_snap_success()
+
+    def _record_snap_success(self) -> None:
+        self._snap_fail_streak = 0
+
+    def _record_snap_failure(self, detail: str) -> None:
+        self._snap_fail_streak += 1
+        if self._snap_fail_streak >= self.SNAP_BREAKER_TRIPS:
+            self._snap_paused_until = time.time() + self.SNAP_BREAKER_PAUSE
+            self._set_thumb_status("paused", "Snapshots paused 60s — vMix reported save errors")
+        else:
+            self._set_thumb_status("starting", detail)
+
+    def _is_monitor_input(self, key: str) -> bool:
+        """True when this input is currently routed to Program or Preview
+        (monitors refresh faster; grid stills barely change)."""
+        st = self.last_state
+        if not st:
+            return False
+        keys = {str(key)}
+        for inp in st.get("allInputs", []):
+            if str(inp.get("key")) == str(key) or str(inp.get("number")) == str(key):
+                keys.add(str(inp.get("number")))
+                keys.add(str(inp.get("key")))
+        active = str(st.get("active", ""))
+        preview = str(st.get("preview", ""))
+        return bool((active and active in keys) or (preview and preview in keys))
 
     def _set_thumb_status(self, mode: str, detail: str) -> None:
         if mode != self._thumb_mode:
