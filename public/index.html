@@ -361,6 +361,9 @@
         <div class="manage-sources-toolbar">
           <input type="text" id="source-search-input" placeholder="Search sources..." class="search-input">
           <div class="toolbar-actions">
+            <span class="priority-count-pill" id="manage-priority-badge">Priority: 0 / 20</span>
+            <button type="button" id="manage-auto-priority-btn" class="btn btn-secondary btn-sm" title="Auto-pick live inputs into the priority tier">Auto Pick</button>
+            <button type="button" id="manage-clear-priority-btn" class="btn btn-secondary btn-sm" title="Clear priority inputs">Clear Priority</button>
             <button id="unhide-all-btn" class="btn btn-secondary btn-sm">Show All Sources</button>
           </div>
         </div>
@@ -373,6 +376,7 @@
                 <th>Source Title in vMix</th>
                 <th>Custom Button Label</th>
                 <th>Type</th>
+                <th class="col-center">Priority ★</th>
                 <th class="col-center col-display">Display on Switcher</th>
               </tr>
             </thead>
@@ -452,15 +456,51 @@
             </div>
 
             <div class="form-group form-group-spaced">
-              <label for="setting-preview-fps">Live Preview Refresh Rate</label>
+              <label for="setting-preview-fps">Priority Live Pull Rate (Fast Tier)</label>
               <select id="setting-preview-fps">
-                <option value="1">1 fps (lowest load)</option>
+                <option value="1.5">1.5 fps (low bandwidth / stills)</option>
                 <option value="2">2 fps</option>
                 <option value="4">4 fps (balanced)</option>
                 <option value="6">6 fps (smooth)</option>
-                <option value="10">10 fps (turbo - needs vMix on the same PC)</option>
+                <option value="10">10 fps (turbo)</option>
+                <option value="15">15 fps</option>
+                <option value="20">20 fps</option>
+                <option value="30">30 fps (high speed — 30 frames)</option>
+                <option value="60">60 fps (ultra broadcast — 60 frames)</option>
               </select>
-              <small class="field-hint">How often preview images are re-captured from vMix. Higher rates mean more load on the vMix machine.</small>
+              <small class="field-hint">Refresh cadence for Program/Preview monitors and picked Priority inputs (up to 20 inputs). Higher values provide smoother live motion.</small>
+            </div>
+
+            <div class="form-group form-group-spaced">
+              <label for="setting-background-fps">Non-Priority Pull Rate (Eco System)</label>
+              <select id="setting-background-fps">
+                <option value="0.5">0.5 fps (ultra light)</option>
+                <option value="1">1 fps</option>
+                <option value="1.5">1.5 fps (recommended for images/stills)</option>
+                <option value="2">2 fps</option>
+                <option value="4">4 fps</option>
+              </select>
+              <small class="field-hint">Refresh cadence for remaining non-priority inputs. Saves network space. Static images stay static unless picked as priority.</small>
+            </div>
+
+            <div class="form-group form-group-spaced">
+              <label>Priority Live Tier (<span id="settings-priority-max-label">20</span> max inputs)</label>
+              <div class="priority-settings-card">
+                <div class="priority-status-row">
+                  <span class="priority-status-count" id="settings-priority-summary">0 of 20 priority inputs active</span>
+                  <div class="priority-action-btns">
+                    <button type="button" id="settings-auto-priority-btn" class="btn btn-secondary btn-sm">Auto Pick</button>
+                    <button type="button" id="settings-clear-priority-btn" class="btn btn-secondary btn-sm">Clear Priority</button>
+                  </div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group col-half">
+                    <label for="setting-max-priority">Max priority inputs (per venue)</label>
+                    <input type="number" id="setting-max-priority" min="1" max="50" step="1" value="20">
+                  </div>
+                </div>
+                <small class="field-hint">Priority inputs get the high-frame-rate tiered live system. All other inputs stay on the eco pulling system to save network space. Big walls raise the max; small setups lower it to protect Wi-Fi and the vMix PC. Note: vMix renders each snapshot in turn (~1/s shared), so high pull rates deliver fresh frames instantly via cheap re-checks rather than minting more renders.</small>
+              </div>
             </div>
 
             <div class="form-group form-group-spaced">
@@ -524,6 +564,8 @@
       </div>
     </div>
   </div>
+
+  <div id="app-toast" class="app-toast"></div>
 
   <script src="/js/api.js"></script>
   <script src="/js/app.js"></script>

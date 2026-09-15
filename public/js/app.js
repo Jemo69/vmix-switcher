@@ -10,6 +10,13 @@ class SwitcherApp {
     this.soundEnabled = true;
     this.showThumbnails = localStorage.getItem('vmix_show_thumbnails') !== 'false';
     this.previewFps = parseFloat(localStorage.getItem('vmix_preview_fps')) || 4;
+    // Two-tier pull: picked priority inputs (+monitors) poll fast, the rest eco.
+    this.backgroundFps = parseFloat(localStorage.getItem('vmix_background_fps') || localStorage.getItem('vmix_bg_fps')) || 1.5;
+    this.maxPriority = 20;
+    this.priorityInputs = new Set();
+    this.ecoTimer = null;
+    this.ecoTickCount = 0;
+    this.toastTimer = null;
     // True-motion Program video via vMix LiveLAN (iframe embed, ~10s delay).
     // Per-device toggle; the URL itself syncs from server config/state so the
     // whole crew shares one setting. Snapshots stay as fallback + Preview.
@@ -130,10 +137,20 @@ class SwitcherApp {
       settingMockMode: document.getElementById('setting-mock-mode'),
       settingShowThumbnails: document.getElementById('setting-show-thumbnails'),
       settingPreviewFps: document.getElementById('setting-preview-fps'),
+      settingBackgroundFps: document.getElementById('setting-background-fps'),
+      settingMaxPriority: document.getElementById('setting-max-priority'),
+      settingsPrioritySummary: document.getElementById('settings-priority-summary'),
+      settingsPriorityMaxLabel: document.getElementById('settings-priority-max-label'),
+      settingsAutoPriorityBtn: document.getElementById('settings-auto-priority-btn'),
+      settingsClearPriorityBtn: document.getElementById('settings-clear-priority-btn'),
+      managePriorityBadge: document.getElementById('manage-priority-badge'),
+      manageAutoPriorityBtn: document.getElementById('manage-auto-priority-btn'),
+      manageClearPriorityBtn: document.getElementById('manage-clear-priority-btn'),
       settingLivelanUrl: document.getElementById('setting-livelan-url'),
       settingNewPassword: document.getElementById('setting-new-password'),
       networkIpsList: document.getElementById('network-ips-list'),
       settingsSaveStatus: document.getElementById('settings-save-status'),
+      toast: document.getElementById('app-toast'),
 
       logoutBtn: document.getElementById('logout-btn'),
       vmixVersionLabel: document.getElementById('vmix-version-label'),
@@ -395,6 +412,19 @@ class SwitcherApp {
       }
     });
 
+    if (this.dom.manageAutoPriorityBtn) {
+      this.dom.manageAutoPriorityBtn.addEventListener('click', () => this.autoPickPrioritySources());
+    }
+    if (this.dom.manageClearPriorityBtn) {
+      this.dom.manageClearPriorityBtn.addEventListener('click', () => this.clearPrioritySources());
+    }
+    if (this.dom.settingsAutoPriorityBtn) {
+      this.dom.settingsAutoPriorityBtn.addEventListener('click', () => this.autoPickPrioritySources());
+    }
+    if (this.dom.settingsClearPriorityBtn) {
+      this.dom.settingsClearPriorityBtn.addEventListener('click', () => this.clearPrioritySources());
+    }
+
     // Settings Modal
     this.dom.settingsBtn.addEventListener('click', () => this.openSettingsModal());
     this.dom.closeSettingsBtn.addEventListener('click', () => this.closeSettingsModal());
@@ -448,6 +478,16 @@ class SwitcherApp {
       }
       if (this.currentConfig.vmixPort) {
         this.vmixPort = this.currentConfig.vmixPort;
+      }
+      if (typeof this.currentConfig.backgroundFps === 'number') {
+        this.backgroundFps = Math.min(5, Math.max(0.1, this.currentConfig.backgroundFps));
+      }
+      if (typeof this.currentConfig.maxPriorityInputs === 'number') {
+        this.maxPriority = Math.min(50, Math.max(1, this.currentConfig.maxPriorityInputs));
+      }
+      if (Array.isArray(this.currentConfig.priorityInputs)) {
+        this.priorityInputs = new Set(this.currentConfig.priorityInputs.map(String));
+        this._lastPriorityKey = this.currentConfig.priorityInputs.join(',');
       }
     } catch (err) {
       console.error('Failed to load config', err);
@@ -624,7 +664,7 @@ class SwitcherApp {
   }
 
   setPreviewFps(fps) {
-    const next = Math.min(10, Math.max(0.5, parseFloat(fps) || 4));
+    const next = Math.min(60, Math.max(0.5, parseFloat(fps) || 4));
     if (next === this.previewFps) return;
     this.previewFps = next;
     localStorage.setItem('vmix_preview_fps', String(next));
@@ -632,7 +672,19 @@ class SwitcherApp {
   }
 
   getPreviewIntervalMs() {
-    return Math.max(80, Math.round(1000 / this.previewFps));
+    return Math.max(16, Math.round(1000 / this.previewFps));
+  }
+
+  setBackgroundFps(fps) {
+    const next = Math.min(10, Math.max(0.1, parseFloat(fps) || 1.5));
+    if (next === this.backgroundFps) return;
+    this.backgroundFps = next;
+    localStorage.setItem('vmix_background_fps', String(next));
+    this.startThumbnailRefresh();
+  }
+
+  getEcoIntervalMs() {
+    return Math.max(100, Math.round(1000 / (this.backgroundFps || 1.5)));
   }
 
   // Only poll images that are on screen, and never stack requests on a slow link
@@ -669,7 +721,9 @@ class SwitcherApp {
     if (img.dataset.thumbLoading === '1') return;
 
     img.dataset.thumbLoading = '1';
-    const targetUrl = `${API.getThumbnailUrl(inputNum)}&_t=${Date.now()}`;
+    // No cache-buster: the server answers ETag + 304 for unchanged frames, so
+    // fast polling is cheap and fresh frames land the instant they render.
+    const targetUrl = API.getThumbnailUrl(inputNum);
 
     // Smooth offscreen preload to prevent flicker and blank flash
     const preloader = new Image();
@@ -692,28 +746,35 @@ class SwitcherApp {
     preloader.src = targetUrl;
   }
 
+  // Tier membership: monitors are always priority; grid tiles follow the
+  // operator's picks. Before first state arrives, keep today's behavior
+  // (live sources fast) so nothing regresses.
+  isPriorityInput(inpData) {
+    if (!inpData) return true;
+    if (inpData.isActive || inpData.isPreview) return true;
+    if (inpData.isPriority === true) return true;
+    const num = String(inpData.number);
+    const key = String(inpData.key);
+    return this.priorityInputs.has(num) || this.priorityInputs.has(key);
+  }
+
   startThumbnailRefresh() {
     this.stopThumbnailRefresh();
     if (!this.showThumbnails) return;
-    this.refreshTickCount = 0;
+    // Fast loop: monitors + picked priority tiles.
     this.thumbTimer = setInterval(() => {
       if (!this.showThumbnails || this.dom.appContainer.classList.contains('hidden')) return;
       if (document.hidden) return;
       if (this.currentView === 'audio') return; // Pause thumbnail requests while in Audio view
 
-      this.refreshTickCount = (this.refreshTickCount + 1) % 60;
-      const isFullTick = (this.refreshTickCount % 5 === 0);
-
-      // Refresh Switcher Grid cards: Live sources (Camera, NDI, Video) every tick; static stills periodically
-      const imgs = this.dom.sourcesGrid.querySelectorAll('.source-thumb-img');
-      imgs.forEach(img => {
-        const inpNum = img.getAttribute('data-thumb-input');
-        const inpData = this.getInputData(inpNum);
-        const isLiveFeed = inpData ? inpData.isLiveSource : true;
-        if (isLiveFeed || isFullTick) {
-          this.refreshThumb(img);
-        }
-      });
+      const eachGrid = (selector, fn) => {
+        const imgs = this.dom.sourcesGrid.querySelectorAll(selector);
+        imgs.forEach(img => {
+          if (this.isPriorityInput(this.getInputData(img.getAttribute('data-thumb-input')))) fn(img);
+        });
+      };
+      // Refresh priority Switcher Grid cards
+      eachGrid('.source-thumb-img', img => this.refreshThumb(img));
 
       // Refresh Live Monitors (Program & Preview)
       if (this.currentState) {
@@ -729,7 +790,7 @@ class SwitcherApp {
             if (!img) return;
             img.dataset.thumbLoading = '0';
             img.setAttribute('data-thumb-input', activeNum);
-            if (pgmSnapshots) img.src = `${API.getThumbnailUrl(activeNum)}&_t=${Date.now()}`;
+            if (pgmSnapshots) img.src = API.getThumbnailUrl(activeNum);
           });
         }
         if (previewNum !== this.lastMonitoredPreview) {
@@ -738,7 +799,7 @@ class SwitcherApp {
             if (!img) return;
             img.dataset.thumbLoading = '0';
             img.setAttribute('data-thumb-input', previewNum);
-            img.src = `${API.getThumbnailUrl(previewNum)}&_t=${Date.now()}`;
+            img.src = API.getThumbnailUrl(previewNum);
           });
         }
 
@@ -757,25 +818,52 @@ class SwitcherApp {
         }
       }
 
-      // Refresh Multiviewer Camera grid thumbnails
+      // Refresh priority Multiviewer tiles
       if (this.dom.multiviewCamsGrid) {
         const mvImgs = this.dom.multiviewCamsGrid.querySelectorAll('.mv-cam-img');
         mvImgs.forEach(img => {
-          const inpNum = img.getAttribute('data-thumb-input');
-          const inpData = this.getInputData(inpNum);
-          const isLiveFeed = inpData ? inpData.isLiveSource : true;
-          if (isLiveFeed || isFullTick) {
+          if (this.isPriorityInput(this.getInputData(img.getAttribute('data-thumb-input')))) {
             this.refreshThumb(img);
           }
         });
       }
     }, this.getPreviewIntervalMs());
+
+    // Eco loop: everything else, at the background rate.
+    // Live feeds pull at 1.5 fps. Static stills/images only pull periodically to save network!
+    // ("Images don't need to be pulled every frame except if it's put as a priority frame")
+    this.ecoTickCount = 0;
+    this.ecoTimer = setInterval(() => {
+      if (!this.showThumbnails || this.dom.appContainer.classList.contains('hidden')) return;
+      if (document.hidden) return;
+      if (this.currentView === 'audio') return;
+
+      this.ecoTickCount = (this.ecoTickCount + 1) % 60;
+      const isStaticTick = (this.ecoTickCount % 15 === 0);
+
+      const eachEco = (root, selector) => {
+        root.querySelectorAll(selector).forEach(img => {
+          const inpData = this.getInputData(img.getAttribute('data-thumb-input'));
+          if (!inpData || this.isPriorityInput(inpData)) return;
+          const isLive = inpData.isLiveSource;
+          if (isLive || isStaticTick) {
+            this.refreshThumb(img);
+          }
+        });
+      };
+      eachEco(this.dom.sourcesGrid, '.source-thumb-img');
+      if (this.dom.multiviewCamsGrid) eachEco(this.dom.multiviewCamsGrid, '.mv-cam-img');
+    }, this.getEcoIntervalMs());
   }
 
   stopThumbnailRefresh() {
     if (this.thumbTimer) {
       clearInterval(this.thumbTimer);
       this.thumbTimer = null;
+    }
+    if (this.ecoTimer) {
+      clearInterval(this.ecoTimer);
+      this.ecoTimer = null;
     }
   }
 
@@ -879,9 +967,27 @@ class SwitcherApp {
   handleStateUpdate(state) {
     this.currentState = state;
 
-    // Live preview refresh rate (server is the source of truth)
+    // Live preview refresh rates (server is the source of truth)
     if (state.previewFps && state.previewFps !== this.previewFps) {
       this.setPreviewFps(state.previewFps);
+    }
+    if (state.backgroundFps && state.backgroundFps !== this.backgroundFps) {
+      this.setBackgroundFps(state.backgroundFps);
+    }
+    if (typeof state.maxPriorityInputs === 'number' && state.maxPriorityInputs !== this.maxPriority) {
+      this.maxPriority = state.maxPriorityInputs;
+      this.updatePrioritySummary();
+    }
+    if (Array.isArray(state.priorityInputs)) {
+      const key = state.priorityInputs.join(',');
+      if (key !== this._lastPriorityKey) {
+        this._lastPriorityKey = key;
+        this.priorityInputs = new Set(state.priorityInputs.map(String));
+        this.updatePrioritySummary();
+        if (!this.dom.manageSourcesModal.classList.contains('hidden')) {
+          this.renderManageSourcesTable();
+        }
+      }
     }
 
     // Connection badge
@@ -968,7 +1074,7 @@ class SwitcherApp {
         if (!img) return;
         img.dataset.thumbLoading = '0';
         img.setAttribute('data-thumb-input', activeNum);
-        if (pgmSnapshots) img.src = `${API.getThumbnailUrl(activeNum)}&_t=${now}`;
+        if (pgmSnapshots) img.src = API.getThumbnailUrl(activeNum);
       });
     } else {
       [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => {
@@ -981,7 +1087,7 @@ class SwitcherApp {
         if (!img) return;
         img.dataset.thumbLoading = '0';
         img.setAttribute('data-thumb-input', previewNum);
-        img.src = `${API.getThumbnailUrl(previewNum)}&_t=${now}`;
+        img.src = API.getThumbnailUrl(previewNum);
       });
     } else {
       [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => {
@@ -1085,8 +1191,16 @@ class SwitcherApp {
     if (canUpdateInPlace) {
       existingCards.forEach((card, idx) => {
         const inp = inputs[idx];
+        const isPriority = this.isPriorityInput(inp);
         card.classList.toggle('is-program', Boolean(inp.isActive));
         card.classList.toggle('is-preview', Boolean(inp.isPreview));
+        card.classList.toggle('is-priority', isPriority);
+
+        const priBtn = card.querySelector('.source-priority-btn');
+        if (priBtn) {
+          priBtn.classList.toggle('is-priority', isPriority);
+          priBtn.title = isPriority ? 'Priority live feed (Click to remove)' : 'Eco feed (Click to prioritize)';
+        }
 
         let tallyText = 'STANDBY';
         if (inp.isActive) tallyText = 'PROGRAM / LIVE';
@@ -1119,10 +1233,11 @@ class SwitcherApp {
 
         // Keep the thumbnail feed badge honest in place: type word, dot follows signal.
         const feedBadge = card.querySelector('.live-feed-badge');
-        if (feedBadge && inp.isLiveSource) {
+        if (feedBadge) {
+          feedBadge.classList.toggle('is-priority-feed', isPriority);
           const dot = feedBadge.querySelector('.live-signal-dot');
           if (dot) dot.classList.toggle('live', inp.signalStatus === 'live');
-          const label = this.feedBadgeLabel(inp);
+          const label = isPriority ? `★ ${this.feedBadgeLabel(inp)}` : this.feedBadgeLabel(inp);
           const textNode = Array.from(feedBadge.childNodes).find(n => n.nodeType === 3);
           if (textNode && textNode.textContent !== label) textNode.textContent = label;
         }
@@ -1134,8 +1249,9 @@ class SwitcherApp {
     const fragment = document.createDocumentFragment();
 
     inputs.forEach(inp => {
+      const isPriority = this.isPriorityInput(inp);
       const card = document.createElement('div');
-      card.className = `source-card ${inp.isActive ? 'is-program' : ''} ${inp.isPreview ? 'is-preview' : ''}`;
+      card.className = `source-card ${inp.isActive ? 'is-program' : ''} ${inp.isPreview ? 'is-preview' : ''} ${isPriority ? 'is-priority' : ''}`;
       card.setAttribute('data-input', inp.number);
 
       const title = inp.customTitle || inp.shortTitle || inp.title;
@@ -1150,16 +1266,26 @@ class SwitcherApp {
       const signalLive = inp.signalStatus === 'live';
       const liveDotHtml = inp.isLiveSource ? `<span class="live-signal-dot ${signalLive ? 'live' : ''}" title="${signalLive ? 'Receiving live signal' : 'Signal on standby'}"></span>` : '';
 
+      const showBadge = inp.isLiveSource || isPriority;
+      const badgeLabel = isPriority ? `★ ${this.feedBadgeLabel(inp)}` : this.feedBadgeLabel(inp);
       const thumbHtml = this.showThumbnails ? `
         <div class="source-thumb-container">
           <img class="source-thumb-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">
-          ${inp.isLiveSource ? `<span class="live-feed-badge type-${typeLower}"><span class="live-signal-dot ${signalLive ? 'live' : ''}"></span>${this.feedBadgeLabel(inp)}</span>` : ''}
+          ${showBadge ? `<span class="live-feed-badge ${isPriority ? 'is-priority-feed' : ''} type-${typeLower}"><span class="live-signal-dot ${signalLive ? 'live' : ''}"></span>${this.escapeHtml(badgeLabel)}</span>` : ''}
         </div>
       ` : '';
 
       card.innerHTML = `
         <div class="source-card-header">
-          <span class="source-number-badge">${inp.number}</span>
+          <div class="source-header-left">
+            <span class="source-number-badge">${inp.number}</span>
+            <button type="button"
+              class="source-priority-btn ${isPriority ? 'is-priority' : ''}"
+              data-priority-input="${inp.number}"
+              title="${isPriority ? 'Priority live feed (Click to remove)' : 'Eco feed (Click to prioritize)'}">
+              ★
+            </button>
+          </div>
           <div class="source-badges-right">
             ${overlayHtml}
             ${audioMuteHtml}
@@ -1172,6 +1298,14 @@ class SwitcherApp {
           <span class="tally-status-text">${tallyText}</span>
         </div>
       `;
+
+      const priBtn = card.querySelector('.source-priority-btn');
+      if (priBtn) {
+        priBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.toggleSourcePriority(inp.number);
+        });
+      }
 
       card.addEventListener('click', () => this.handleSourceClick(inp));
 
@@ -1360,6 +1494,7 @@ class SwitcherApp {
     const t = (inp.type || '').toLowerCase();
     if (t.includes('ndi')) return 'NDI';
     if (t.includes('camera') || t.includes('capture')) return 'CAM';
+    if (t.includes('image') || t.includes('photo') || t.includes('picture')) return 'IMAGE';
     if (t.includes('desktop') || t.includes('screen')) return 'SCREEN';
     if (t.includes('video') || t.includes('stream') || t.includes('srt') || t.includes('rtsp')) return 'VIDEO';
     if (t.includes('call')) return 'CALL';
@@ -1396,8 +1531,10 @@ class SwitcherApp {
     if (canUpdateInPlace) {
       existingTiles.forEach((tile, idx) => {
         const inp = inputs[idx];
+        const isPriority = this.isPriorityInput(inp);
         tile.classList.toggle('is-program', Boolean(inp.isActive));
         tile.classList.toggle('is-preview', Boolean(inp.isPreview));
+        tile.classList.toggle('is-priority', isPriority);
 
         const typeLower = (inp.type || '').toLowerCase();
         let badgeLabel = `CAM ${inp.number}`;
@@ -1432,9 +1569,10 @@ class SwitcherApp {
     const fragment = document.createDocumentFragment();
 
     inputs.forEach(inp => {
+      const isPriority = this.isPriorityInput(inp);
       const title = inp.customTitle || inp.shortTitle || inp.title;
       const tile = document.createElement('div');
-      tile.className = `multiview-cam-tile ${inp.isActive ? 'is-program' : (inp.isPreview ? 'is-preview' : '')}`;
+      tile.className = `multiview-cam-tile ${inp.isActive ? 'is-program' : (inp.isPreview ? 'is-preview' : '')} ${isPriority ? 'is-priority' : ''}`;
       tile.setAttribute('data-mv-input', inp.number);
 
       const typeLower = (inp.type || '').toLowerCase();
@@ -1482,6 +1620,134 @@ class SwitcherApp {
     this.dom.multiviewCamsGrid.appendChild(fragment);
   }
 
+  // ---- Priority tier (operator picks, per-venue cap) ----
+  priorityCount() {
+    if (this.priorityInputs && this.priorityInputs.size > 0) return this.priorityInputs.size;
+    const list = this.currentState?.priorityInputs;
+    if (Array.isArray(list)) return list.length;
+    const inputs = this.currentState?.allInputs || [];
+    return inputs.filter(i => i.isPriority).length;
+  }
+
+  updatePrioritySummary() {
+    const n = this.priorityCount();
+    const max = this.maxPriority || 20;
+    const isFull = n >= max;
+    const text = `${n} of ${max} priority inputs active`;
+    if (this.dom.settingsPrioritySummary) this.dom.settingsPrioritySummary.textContent = text;
+    if (this.dom.managePriorityBadge) {
+      this.dom.managePriorityBadge.textContent = `Priority: ${n} / ${max}`;
+      this.dom.managePriorityBadge.classList.toggle('is-full', isFull);
+    }
+    if (this.dom.settingsPriorityMaxLabel) this.dom.settingsPriorityMaxLabel.textContent = String(max);
+    if (this.dom.settingMaxPriority) this.dom.settingMaxPriority.value = String(max);
+  }
+
+  showToast(message, duration = 2500) {
+    let toast = this.dom.toast || document.getElementById('app-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'app-toast';
+      toast.className = 'app-toast';
+      document.body.appendChild(toast);
+      this.dom.toast = toast;
+    }
+    toast.textContent = message;
+    toast.classList.add('visible');
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => {
+      toast.classList.remove('visible');
+    }, duration);
+  }
+
+  async autoPickPrioritySources() {
+    this.vibrate();
+    try {
+      const res = await API.autoPrioritySources();
+      if (res && Array.isArray(res.priorityInputs)) {
+        this.priorityInputs = new Set(res.priorityInputs.map(String));
+      }
+      this.updatePrioritySummary();
+      if (this.currentState?.visibleInputs) {
+        this.renderSourcesGrid(this.currentState.visibleInputs);
+      }
+      this.renderManageSourcesTable();
+      this.showToast(`Auto-selected up to ${this.maxPriority || 20} live priority inputs`);
+    } catch (err) {
+      console.error('Auto-pick priority failed', err);
+      this.showToast(err.message || 'Failed to auto-pick priority', 3500);
+    }
+  }
+
+  async clearPrioritySources() {
+    if (!confirm('Clear all priority picks? Every input returns to the eco pull.')) return;
+    this.vibrate();
+    try {
+      await API.clearPrioritySources();
+      this.priorityInputs.clear();
+      this.updatePrioritySummary();
+      if (this.currentState?.visibleInputs) {
+        this.renderSourcesGrid(this.currentState.visibleInputs);
+      }
+      this.renderManageSourcesTable();
+      this.showToast('All priority inputs cleared');
+    } catch (err) {
+      console.error('Clear priority failed', err);
+      this.showToast(err.message || 'Failed to clear priority', 3500);
+    }
+  }
+
+  async toggleSourcePriority(inputNum, wantPriority) {
+    this.vibrate();
+    const strNum = String(inputNum);
+    const currentlyPriority = this.priorityInputs.has(strNum) ||
+      Boolean(this.currentState?.allInputs?.find(i => String(i.number) === strNum)?.isPriority);
+    const nextPriority = typeof wantPriority === 'boolean' ? wantPriority : !currentlyPriority;
+
+    if (nextPriority && this.priorityCount() >= (this.maxPriority || 20) && !this.priorityInputs.has(strNum)) {
+      this.showToast(`Priority limit reached (max ${this.maxPriority || 20} inputs). Remove another input first.`, 3000);
+      return;
+    }
+
+    if (nextPriority) {
+      this.priorityInputs.add(strNum);
+    } else {
+      this.priorityInputs.delete(strNum);
+    }
+    this.updatePrioritySummary();
+    if (this.currentState?.visibleInputs) {
+      this.renderSourcesGrid(this.currentState.visibleInputs);
+    }
+    this.renderManageSourcesTable();
+
+    try {
+      const res = await API.setSourcePriority(strNum, nextPriority);
+      if (res && Array.isArray(res.priorityInputs)) {
+        this.priorityInputs = new Set(res.priorityInputs.map(String));
+      }
+      this.showToast(nextPriority ? `Input #${strNum} added to Priority tier` : `Input #${strNum} removed from Priority tier`);
+      this.updatePrioritySummary();
+    } catch (err) {
+      console.error('Priority toggle failed', err);
+      // Revert optimistic update
+      if (nextPriority) {
+        this.priorityInputs.delete(strNum);
+      } else {
+        this.priorityInputs.add(strNum);
+      }
+      this.updatePrioritySummary();
+      if (this.currentState?.visibleInputs) {
+        this.renderSourcesGrid(this.currentState.visibleInputs);
+      }
+      this.renderManageSourcesTable();
+      this.showToast(err.message || 'Failed to update priority', 3500);
+    }
+  }
+
+  async toggleInputPriority(inputNum, wantPriority) {
+    return this.toggleSourcePriority(inputNum, wantPriority);
+  }
+
   // Manage Sources Modal (Ignore/Hide inputs on app side)
   openManageSourcesModal() {
     this.dom.manageSourcesModal.classList.remove('hidden');
@@ -1512,7 +1778,7 @@ class SwitcherApp {
     if (filtered.length === 0) {
       this.dom.manageSourcesTableBody.innerHTML = `
         <tr>
-          <td colspan="5" class="table-empty">
+          <td colspan="6" class="table-empty">
             ${allInputs.length === 0 ? 'No inputs loaded from vMix.' : 'No sources matching search.'}
           </td>
         </tr>
@@ -1523,6 +1789,7 @@ class SwitcherApp {
     this.dom.manageSourcesTableBody.innerHTML = filtered.map(inp => {
       const isIgnored = Boolean(inp.isIgnored);
       const customName = inp.customTitle || '';
+      const isPri = this.isPriorityInput(inp);
 
       return `
         <tr class="${isIgnored ? 'row-ignored' : ''}" data-input-row="${inp.number}">
@@ -1541,6 +1808,15 @@ class SwitcherApp {
           </td>
           <td><span class="source-type-pill">${inp.type || 'Generic'}</span></td>
           <td class="table-center">
+            <button type="button"
+              class="btn-priority-chip ${isPri ? 'active' : ''}"
+              data-input="${inp.number}"
+              title="${isPri ? 'On the fast priority tier — click to drop to eco' : 'Click to pull onto the fast priority tier'}"
+            >
+              ★ ${isPri ? 'Priority' : 'Eco'}
+            </button>
+          </td>
+          <td class="table-center">
             <label class="toggle-switch">
               <input type="checkbox"
                 class="source-ignore-toggle"
@@ -1555,6 +1831,13 @@ class SwitcherApp {
     }).join('');
 
     // Attach listeners
+    this.dom.manageSourcesTableBody.querySelectorAll('.btn-priority-chip').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const inputNum = e.currentTarget.dataset.input;
+        this.vibrate();
+        await this.toggleSourcePriority(inputNum);
+      });
+    });
     this.dom.manageSourcesTableBody.querySelectorAll('.source-ignore-toggle').forEach(toggle => {
       toggle.addEventListener('change', async (e) => {
         const inputNum = e.target.dataset.input;
@@ -1611,6 +1894,15 @@ class SwitcherApp {
       if (this.dom.settingPreviewFps) {
         this.dom.settingPreviewFps.value = String(cfg.previewFps || this.previewFps);
       }
+      if (this.dom.settingBackgroundFps) {
+        this.dom.settingBackgroundFps.value = String(cfg.backgroundFps ?? this.backgroundFps);
+      }
+      if (this.dom.settingMaxPriority) {
+        const max = cfg.maxPriorityInputs || this.maxPriority || 20;
+        this.dom.settingMaxPriority.value = String(max);
+        this.maxPriority = max;
+      }
+      this.updatePrioritySummary();
       if (this.dom.settingLivelanUrl) {
         this.dom.settingLivelanUrl.value = cfg.livelanUrl || '';
         this.dom.settingLivelanUrl.placeholder = `Auto: http://${window.location.hostname}:${cfg.vmixPort || 8088}/livelan`;
@@ -1668,6 +1960,18 @@ class SwitcherApp {
     if (this.dom.settingPreviewFps) {
       this.setPreviewFps(parseFloat(this.dom.settingPreviewFps.value));
       updates.previewFps = this.previewFps;
+    }
+
+    if (this.dom.settingBackgroundFps) {
+      this.setBackgroundFps(parseFloat(this.dom.settingBackgroundFps.value));
+      updates.backgroundFps = this.backgroundFps;
+    }
+
+    if (this.dom.settingMaxPriority) {
+      const max = Math.min(50, Math.max(1, parseInt(this.dom.settingMaxPriority.value, 10) || 20));
+      this.maxPriority = max;
+      updates.maxPriorityInputs = max;
+      this.updatePrioritySummary();
     }
 
     if (this.dom.settingLivelanUrl) {

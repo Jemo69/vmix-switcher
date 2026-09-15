@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import time
 import urllib.parse
 import urllib.request
@@ -228,12 +229,14 @@ class VMixClient:
             custom_title = aliases.get(inp_num_str) or aliases.get(inp_key) or inp["shortTitle"] or inp["title"]
             custom_color = colors.get(inp_num_str) or colors.get(inp_key)
             is_ignored = (inp_num_str in ignored) or (inp_key in ignored)
+            is_priority = self._is_picked_priority(inp_key) or self._is_picked_priority(inp_num_str)
 
             all_inputs.append({
                 **inp,
                 "customTitle": custom_title,
                 "customColor": custom_color,
                 "isIgnored": is_ignored,
+                "isPriority": is_priority,
                 "snapAgeSec": self._snap_age_for_key(str(inp.get("key") or inp.get("number"))),
             })
 
@@ -251,6 +254,9 @@ class VMixClient:
             "transitionDuration": cfg.get("transitionDuration", 500),
             "switcherMode": cfg.get("switcherMode", "direct"),
             "previewFps": self._preview_fps(),
+            "backgroundFps": self._background_fps(),
+            "priorityInputs": sorted(list(self._priority_set()), key=lambda x: (0, int(x)) if x.isdigit() else (1, x)),
+            "maxPriorityInputs": config_manager.max_priority_inputs(),
             "livelanUrl": cfg.get("livelanUrl", ""),
             "vmixPort": cfg.get("vmixPort", 8088),
             **self.thumbnail_status(),
@@ -272,9 +278,12 @@ class VMixClient:
             full_state.get("transitionDuration"),
             full_state.get("switcherMode"),
             full_state.get("previewFps"),
+            full_state.get("backgroundFps"),
+            tuple(full_state.get("priorityInputs", [])),
+            full_state.get("maxPriorityInputs"),
             full_state.get("thumbnailMode"),
             len(visible_inputs),
-            tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("volume"), i.get("state"), i.get("signalStatus"), i.get("customTitle"), i.get("isIgnored")) for i in all_inputs)
+            tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("volume"), i.get("state"), i.get("signalStatus"), i.get("isPriority"), i.get("customTitle"), i.get("isIgnored")) for i in all_inputs)
         )
 
         now = time.time()
@@ -402,19 +411,141 @@ class VMixClient:
         finally:
             self._thumb_inflight.pop(cache_key, None)
 
+    def _resolve_target_id(self, input_id: int | str) -> Any:
+        str_id = str(input_id).lower()
+        if str_id in ("active", "program", "pgm", "0"):
+            return self.last_state.get("active", 1) if self.last_state else 1
+        elif str_id in ("preview", "prv"):
+            return self.last_state.get("preview", 2) if self.last_state else 2
+        return input_id
+
+    def _snap_path_for_key(self, key: str) -> str:
+        import os
+        return os.path.join(self._snap_dir_path(), self._snap_filename(str(key)))
+
+    def _snap_file_stat(self, key: str) -> Optional[tuple[float, int]]:
+        """(mtime, size) of an input's snapshot file, or None."""
+        import os
+        try:
+            st = os.stat(self._snap_path_for_key(key))
+            return (st.st_mtime, st.st_size)
+        except OSError:
+            return None
+
+    def snapshot_etag(self, input_id: int | str) -> Optional[str]:
+        """Weak ETag for conditional thumbnail requests. Stat-only (no file
+        read), None when there is no servable snapshot (offline / remote /
+        not yet captured) so those keep today's no-store behavior."""
+        cfg = config_manager.get()
+        if cfg.get("mockMode", False):
+            target_id = self._resolve_target_id(input_id)
+            is_act = False
+            is_prv = False
+            title = ""
+            if self.last_state:
+                for inp in self.last_state.get("allInputs", []):
+                    if str(inp.get("number")) == str(target_id) or str(inp.get("key")) == str(target_id):
+                        is_act = bool(inp.get("isActive"))
+                        is_prv = bool(inp.get("isPreview"))
+                        title = str(inp.get("title") or "")
+                        break
+            h = hashlib.md5(f"mock-{target_id}-{is_act}-{is_prv}-{title}".encode("utf-8")).hexdigest()[:12]
+            return f'W/"{h}"'
+        if not self.connected:
+            return None
+        if not self._is_vmix_local():
+            return None
+        key = self._resolve_input_key(self._resolve_target_id(input_id))
+        fs = self._snap_file_stat(key)
+        if not fs:
+            return None
+        mtime, size = fs
+        if (time.time() - mtime) > self.SNAP_MAX_FILE_AGE:
+            return None
+        return f'W/"{int(mtime * 1000):x}-{size:x}"'
+
+    def note_poll(self, input_id: int | str) -> bool:
+        """Poll-driven render scheduling without serving bytes: lets 304 fast
+        paths keep snapshots refreshing. Returns True if a trigger fired."""
+        if config_manager.get().get("mockMode", False) or not self.connected:
+            return False
+        if not self._is_vmix_local():
+            return False
+        try:
+            key = self._resolve_input_key(self._resolve_target_id(input_id))
+        except Exception:
+            return False
+        fs = self._snap_file_stat(key)
+        mtime = fs[0] if fs else 0.0
+        return self._schedule_trigger(key, self._snap_path_for_key(key), mtime, time.time())
+
+    def _schedule_trigger(self, key: str, path: str, mtime: float, now: float) -> bool:
+        """Fire a snapshot capture when due, backed-off-aware. Shared by the
+        serving path and the 304 poll path so both keep renders scheduled."""
+        if now < self._snap_paused_until:
+            return False
+        if now < self._snap_backoff.get(str(key), (0, 0.0))[1]:
+            return False
+        interval = self._get_input_interval(key)
+        if not ((mtime <= 0) or ((now - mtime) > interval)):
+            return False
+        if key in self._snap_pending_keys:
+            return False
+        # Starvation guard: the global pacing gate is first-come-first-served,
+        # so a fast input evaluated earlier in every burst (e.g. a monitor)
+        # could defer the rest forever. Inputs that never captured, or are
+        # overdue past 3x their interval, bypass the pacing window.
+        overdue = (mtime <= 0) or ((now - mtime) > 3 * interval)
+        if not overdue and (now - self._snap_last_any) < self._snap_any_interval():
+            return False
+        self._snap_last_any = now
+        self._snap_pending_keys.add(key)
+        asyncio.create_task(self._trigger_snapshot_guarded(key, path))
+        return True
+
+    def _snap_any_interval(self) -> float:
+        # Scale pacing with priority framerate (down to 16ms for 60fps)
+        return max(0.016, min(0.5, 0.5 / (self._preview_fps() / 4.0)))
+
     def _thumb_cache_ttl(self) -> float:
         fps = self._preview_fps()
         # Cache long enough to coalesce the burst of frontend requests
         # (program monitor + corner hero + grid tile all ask for the same
         # input within the same tick), but short enough to stay "live".
-        return min(2.0, max(0.10, 0.9 / fps))
+        return min(2.0, max(0.015, 0.8 / fps))
 
     def _preview_fps(self) -> float:
+        # Priority-tier pull rate. High values (30/60) mean tiles re-poll fast
+        # via cheap conditional requests — vMix still renders each snapshot at
+        # its own physical pace (~1/s shared), so this buys instant delivery
+        # of fresh frames, not more renders.
         try:
             fps = float(config_manager.get().get("previewFps", 4))
         except (TypeError, ValueError):
             fps = 4.0
-        return min(10.0, max(0.5, fps))
+        return min(60.0, max(0.5, fps))
+
+    def _background_fps(self) -> float:
+        # Eco-tier pull + render rate for non-priority inputs.
+        try:
+            fps = float(config_manager.get().get("backgroundFps", 1.5))
+        except (TypeError, ValueError):
+            fps = 1.5
+        return min(5.0, max(0.1, fps))
+
+    def _priority_set(self) -> set:
+        return set(str(x) for x in config_manager.get().get("priorityInputs", []))
+
+    def _is_picked_priority(self, key: str) -> bool:
+        """True when the operator starred this input (number or key match)."""
+        picked = self._priority_set()
+        if str(key) in picked:
+            return True
+        for inp in (self.last_state.get("allInputs", []) if self.last_state else []):
+            if str(inp.get("key")) == str(key) or str(inp.get("number")) == str(key):
+                if str(inp.get("number")) in picked or str(inp.get("key")) in picked:
+                    return True
+        return False
 
     @staticmethod
     def _sniff_image_mime(data: bytes) -> Optional[str]:
@@ -469,15 +600,7 @@ class VMixClient:
         if mtime > 0 and (now - mtime) <= self.SNAP_SUCCESS_FRESH:
             self._snap_last_success = max(self._snap_last_success, mtime)
 
-        paused = now < self._snap_paused_until
-        backed_off_until = self._snap_backoff.get(key, (0, 0.0))[1]
-        backed_off = now < backed_off_until
-        interval = self._get_input_interval(key)
-        due = (mtime <= 0) or ((now - mtime) > interval)
-        if due and not paused and not backed_off and key not in self._snap_pending_keys and (now - self._snap_last_any) >= self.SNAP_MIN_ANY_INTERVAL:
-            self._snap_last_any = now
-            self._snap_pending_keys.add(key)
-            asyncio.create_task(self._trigger_snapshot_guarded(key, path))
+        self._schedule_trigger(key, path, mtime, now)
 
         if mtime > 0 and (now - mtime) <= self.SNAP_MAX_FILE_AGE:
             try:
@@ -497,7 +620,7 @@ class VMixClient:
             # Another input is already streaming snapshots — don't let one
             # still-converging input hide that from the UI pills.
             self._set_thumb_status("live", "Snapshots refreshing from vMix")
-        elif paused:
+        elif now < self._snap_paused_until:
             self._set_thumb_status("paused", self._thumb_detail or "Snapshots paused — vMix reported save errors")
         else:
             self._set_thumb_status("starting", "Requesting first snapshots from vMix…")
@@ -620,14 +743,22 @@ class VMixClient:
         return any(t in inp_type for t in self.LIVE_SOURCE_TYPES)
 
     def _get_input_interval(self, key: str) -> float:
-        """Dynamic refresh rhythm paced by the configured preview rate."""
-        fps_interval = 1.0 / self._preview_fps()
-        if self._is_monitor_input(key):
-            return max(self.SNAP_MIN_MONITOR_INTERVAL, fps_interval)
+        """Dynamic tiered render rhythm:
+        - Monitors (Program/Preview): always fast live tier (up to 30/60 fps).
+        - Starred / Priority inputs: fast live tier (up to 30/60 fps).
+          Note: Images picked as priority ALSO get priority pulling!
+        - Non-priority live feeds (Camera, NDI, Video, Desktop):
+          eco rate (1.0 / backgroundFps, default 1.5 frames = ~0.66s).
+        - Non-priority static stills (images, titles, colours, audio):
+          kept at SNAP_MIN_STATIC_INTERVAL (45s).
+          ('Images don't need to be pulled every frame except if it's put as a priority frame')"""
+        priority_interval = max(0.016, 1.0 / self._preview_fps())
+        bg_interval = max(0.1, 1.0 / self._background_fps())
+
+        if self._is_monitor_input(key) or self._is_picked_priority(key):
+            return priority_interval
         if self._is_live_source(key):
-            # Moving inputs get a deliberate, capped cadence. The global trigger
-            # pacing distributes captures fairly across a camera / NDI wall.
-            return max(self.SNAP_MIN_LIVE_INTERVAL, fps_interval * 2)
+            return bg_interval
         return self.SNAP_MIN_STATIC_INTERVAL
 
     def _is_monitor_input(self, key: str) -> bool:

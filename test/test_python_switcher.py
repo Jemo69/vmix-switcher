@@ -30,7 +30,7 @@ def req(url, method="GET", data=None, token=None):
 
 def test_all():
     print("Starting Python vMix Switcher test suite...")
-    initial_config = config_manager.get()
+    initial_config = dict(config_manager.get())
     try:
         config_manager.update({"mockMode": True, "password": "testpythonpwd", "port": 3006, "ignoredInputs": []})
 
@@ -188,6 +188,127 @@ def test_all():
                 data = resp.read()
                 assert len(data) > 0
         print("✓ Dynamic Program and Preview monitor thumbnail proxy verified")
+
+        # 17. Test Priority & Frame Rate Config Update (30/60 fps fast tier, 1.5 bgFps eco, maxPriority 20)
+        status, res = req(f"{base}/api/config", "PUT", {
+            "previewFps": 30.0,
+            "backgroundFps": 1.5,
+            "maxPriorityInputs": 20
+        }, token=token)
+        assert status == 200 and res.get("success") is True
+        cfg = res.get("config", {})
+        assert cfg.get("previewFps") == 30.0, f"Expected previewFps 30.0, got {cfg.get('previewFps')}"
+        assert cfg.get("backgroundFps") == 1.5, f"Expected backgroundFps 1.5, got {cfg.get('backgroundFps')}"
+        assert cfg.get("maxPriorityInputs") == 20, f"Expected maxPriorityInputs 20, got {cfg.get('maxPriorityInputs')}"
+        print("✓ Frame rate config update (30 fps fast tier, 1.5 fps eco tier, 20 max priority) verified")
+
+        # Verify 60 fps scales up
+        status, res = req(f"{base}/api/config", "PUT", {"previewFps": 60.0}, token=token)
+        assert status == 200
+        assert res.get("config", {}).get("previewFps") == 60.0
+        print("✓ Frame rate scaling up to 60 fps verified")
+
+        # 18. Test Priority Source Toggle (fast tier membership)
+        status, res = req(f"{base}/api/sources/priority", "POST", {"input": 3, "priority": True}, token=token)
+        assert status == 200 and res.get("success") is True
+        assert "3" in res.get("priorityInputs", [])
+        time.sleep(0.2)
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        inp3 = next(i for i in res["allInputs"] if i["number"] == 3)
+        assert inp3.get("isPriority") is True, "Input 3 must have isPriority True"
+        assert "3" in res.get("priorityInputs", [])
+        print("✓ Source priority toggle (input 3 -> fast tier) verified in state")
+
+        # 19. Test Priority Quota Enforcement (cap of maxPriorityInputs)
+        # Set maxPriorityInputs to 2 to test the cap
+        req(f"{base}/api/config", "PUT", {"maxPriorityInputs": 2}, token=token)
+        # Input 3 is already priority. Add input 4 -> 2 inputs (cap reached).
+        status, res = req(f"{base}/api/sources/priority", "POST", {"input": 4, "priority": True}, token=token)
+        assert status == 200
+        # Attempt to add input 5 -> should fail with 409 Conflict
+        status, res = req(f"{base}/api/sources/priority", "POST", {"input": 5, "priority": True}, token=token)
+        assert status == 409, f"Expected 409 Conflict when exceeding priority quota, got {status}"
+        assert "Priority list is full" in res.get("detail", "")
+        print("✓ Priority quota cap enforced (409 Conflict when exceeding max inputs)")
+
+        # Restore maxPriorityInputs to 20
+        req(f"{base}/api/config", "PUT", {"maxPriorityInputs": 20}, token=token)
+
+        # 20. Test Auto-pick Priority (picks up to maxPriorityInputs live sources)
+        status, res = req(f"{base}/api/sources/auto-priority", "POST", {}, token=token)
+        assert status == 200 and res.get("success") is True
+        assert len(res.get("priorityInputs", [])) > 0
+        assert len(res.get("priorityInputs", [])) <= 20
+        print(f"✓ Auto-pick priority verified (selected {len(res['priorityInputs'])} priority inputs)")
+
+        # 21. Test Clear Priority (returns all inputs to eco pull)
+        status, res = req(f"{base}/api/sources/clear-priority", "POST", {}, token=token)
+        assert status == 200 and res.get("success") is True
+        assert len(res.get("priorityInputs", [])) == 0
+        time.sleep(0.2)
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        assert len(res.get("priorityInputs", [])) == 0
+        assert not any(i.get("isPriority") for i in res["allInputs"]), "No inputs should be priority after clear"
+        print("✓ Clear priority verified (all inputs return to eco pull)")
+
+        # 22. Test Thumbnail Conditional 304 Revalidation with ETag
+        thumb_req = urllib.request.Request(f"{base}/api/vmix/thumbnail/1?token={token}")
+        with urllib.request.urlopen(thumb_req, timeout=3.0) as resp:
+            assert resp.status == 200
+            etag = resp.headers.get("ETag")
+            assert etag is not None, "Thumbnail response should include ETag"
+
+        reval_req = urllib.request.Request(f"{base}/api/vmix/thumbnail/1?token={token}", headers={"If-None-Match": etag})
+        try:
+            with urllib.request.urlopen(reval_req, timeout=3.0) as resp:
+                assert resp.status == 304
+        except urllib.error.HTTPError as err:
+            assert err.code == 304, f"Expected 304 Not Modified, got {err.code}"
+        print("✓ Thumbnail conditional 304 revalidation (ETag / If-None-Match) verified")
+
+        # 23. Test Multipart MJPEG Stream Endpoint
+        stream_url = f"{base}/api/vmix/stream/1.mjpg?token={token}"
+        req_stream = urllib.request.Request(stream_url)
+        with urllib.request.urlopen(req_stream, timeout=3.0) as resp:
+            assert resp.status == 200
+            content_type = resp.headers.get("Content-Type", "")
+            assert "multipart/x-mixed-replace" in content_type, f"Expected multipart/x-mixed-replace, got {content_type}"
+            chunk = resp.read(2048)
+            assert len(chunk) > 0
+            assert b"--frame" in chunk
+        print("✓ Tier 2 multipart MJPEG stream endpoint verified")
+
+        # 17. Priority tier: toggle, state flag, venue cap, rate settings
+        status, res = req(f"{base}/api/sources/priority", "POST", {"input": 2, "priority": True}, token=token)
+        assert status == 200 and "2" in res.get("priorityInputs", []), f"Priority pick failed: {res}"
+        print("✓ Input 2 starred into priority tier")
+        time.sleep(0.4)
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        inp2 = next(i for i in res["allInputs"] if i["number"] == 2)
+        assert inp2.get("isPriority") is True, "Expected isPriority True on input 2"
+        assert "2" in res.get("priorityInputs", []), "Expected state to carry priorityInputs"
+        assert "backgroundFps" in res and "maxPriorityInputs" in res, "Expected tier settings in state"
+        print("✓ Priority flag + tier settings visible in state")
+
+        # Venue cap: shrink to 2, fill, third pick must 409
+        status, res = req(f"{base}/api/config", "PUT", {"maxPriorityInputs": 2}, token=token)
+        assert status == 200 and res["config"]["maxPriorityInputs"] == 2
+        status, res = req(f"{base}/api/sources/priority", "POST", {"input": 3, "priority": True}, token=token)
+        assert status == 200
+        status, res = req(f"{base}/api/sources/priority", "POST", {"input": 4, "priority": True}, token=token)
+        assert status == 409, f"Expected 409 over venue cap, got {status}: {res}"
+        print("✓ Venue priority cap enforced (409 over max)")
+        # Cleanup picks for later runs
+        for n in (2, 3):
+            req(f"{base}/api/sources/priority", "POST", {"input": n, "priority": False}, token=token)
+        req(f"{base}/api/config", "PUT", {"maxPriorityInputs": 20}, token=token)
+
+        # Rate settings round-trip + clamps (30/60 high end, 1.5 low end)
+        status, res = req(f"{base}/api/config", "PUT", {"previewFps": 60, "backgroundFps": 1.5}, token=token)
+        assert status == 200 and res["config"]["previewFps"] == 60.0 and res["config"]["backgroundFps"] == 1.5
+        status, res = req(f"{base}/api/config", "PUT", {"previewFps": 999, "backgroundFps": 0}, token=token)
+        assert res["config"]["previewFps"] == 60.0 and res["config"]["backgroundFps"] == 0.1, res["config"]
+        print("✓ Pull-rate settings round-trip with clamps (0.5–60 priority, 0.1–5 eco)")
 
         print("\nALL PYTHON INTEGRATION TESTS PASSED! 🎉")
     finally:

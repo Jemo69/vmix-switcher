@@ -158,6 +158,31 @@ const API = {
     });
   },
 
+  // Priority Source Management (Tiered Live System)
+  async setSourcePriority(input, priority) {
+    return this.request('/api/sources/priority', {
+      method: 'POST',
+      body: JSON.stringify({ input, priority })
+    });
+  },
+
+  async clearPrioritySources() {
+    return this.request('/api/sources/clear-priority', {
+      method: 'POST'
+    });
+  },
+
+  async autoPrioritySources() {
+    return this.request('/api/sources/auto-priority', {
+      method: 'POST'
+    });
+  },
+
+  getStreamUrl(input) {
+    const token = this.getToken() || '';
+    return `/api/vmix/stream/${encodeURIComponent(input)}.mjpg?token=${encodeURIComponent(token)}`;
+  },
+
   // Configuration
   async getConfig() {
     return this.request('/api/config');

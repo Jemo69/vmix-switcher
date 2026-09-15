@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -137,6 +137,10 @@ class IgnoreRequest(BaseModel):
     input: Any
     ignore: Optional[bool] = None
 
+class PriorityRequest(BaseModel):
+    input: Any
+    priority: Optional[bool] = None
+
 class AliasRequest(BaseModel):
     input: Any
     name: Optional[str] = None
@@ -150,6 +154,8 @@ class ConfigUpdateRequest(BaseModel):
     switcherMode: Optional[str] = None
     pollIntervalMs: Optional[int] = None
     previewFps: Optional[float] = None
+    backgroundFps: Optional[float] = None
+    maxPriorityInputs: Optional[int] = None
     livelanUrl: Optional[str] = None
     mockMode: Optional[bool] = None
     newPassword: Optional[str] = None
@@ -225,9 +231,60 @@ async def execute_function(req: FunctionRequest, _: bool = Depends(require_auth)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/vmix/thumbnail/{input_id}")
-async def get_thumbnail(input_id: str, _: bool = Depends(require_auth)):
+async def get_thumbnail(input_id: str, _: bool = Depends(require_auth),
+                        if_none_match: Optional[str] = Header(None)):
+    # Conditional requests make high-frequency polling cheap: tiles re-poll
+    # fast, but unchanged frames answer 304 (headers only, no file read).
+    # Polling still schedules renders via note_poll, so fresh frames land ASAP.
+    try:
+        etag = vmix_client.snapshot_etag(input_id)
+    except Exception:
+        etag = None
+    if etag and if_none_match and if_none_match.strip() == etag:
+        try:
+            vmix_client.note_poll(input_id)
+        except Exception:
+            pass
+        return Response(status_code=304)
     data, mime = await vmix_client.get_thumbnail(input_id)
-    return Response(content=data, media_type=mime, headers={"Cache-Control": "no-store"})
+    headers = {"Cache-Control": "private, max-age=0"}
+    try:
+        fresh_etag = vmix_client.snapshot_etag(input_id)
+    except Exception:
+        fresh_etag = None
+    if fresh_etag:
+        headers["ETag"] = fresh_etag
+    else:
+        # Placeholders change with tally — never let them cache.
+        headers["Cache-Control"] = "no-store"
+    return Response(content=data, media_type=mime, headers=headers)
+
+@app.get("/api/vmix/stream/{input_id}.mjpg")
+@app.get("/api/vmix/stream/{input_id}")
+async def stream_mjpeg(input_id: str, _: bool = Depends(require_auth)):
+    async def frame_generator():
+        fps = vmix_client._preview_fps()
+        interval = max(0.016, 1.0 / fps)
+        while True:
+            try:
+                data, mime = await vmix_client.get_thumbnail(input_id)
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: " + mime.encode("latin1") + b"\r\n"
+                    b"Content-Length: " + str(len(data)).encode("latin1") + b"\r\n\r\n"
+                    + data + b"\r\n"
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
+            await asyncio.sleep(interval)
+
+    return StreamingResponse(
+        frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+    )
 
 @app.post("/api/vmix/overlay")
 async def toggle_overlay(req: OverlayRequest, _: bool = Depends(require_auth)):
@@ -265,6 +322,41 @@ async def unignore_all(_: bool = Depends(require_auth)):
     config_manager.update({"ignoredInputs": []})
     await vmix_client.poll()
     return {"success": True, "ignoredInputs": []}
+
+# Priority inputs (fast tier). Cap is per-venue configurable (maxPriorityInputs).
+@app.post("/api/sources/priority")
+async def toggle_priority(req: PriorityRequest, _: bool = Depends(require_auth)):
+    try:
+        updated = config_manager.toggle_priority_input(req.input, req.priority)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    await vmix_client.poll()
+    return {"success": True, "priorityInputs": updated}
+
+@app.post("/api/sources/clear-priority")
+async def clear_priority(_: bool = Depends(require_auth)):
+    config_manager.update({"priorityInputs": []})
+    await vmix_client.poll()
+    return {"success": True, "priorityInputs": []}
+
+@app.post("/api/sources/auto-priority")
+async def auto_priority(_: bool = Depends(require_auth)):
+    cap = config_manager.max_priority_inputs()
+    inputs = []
+    if vmix_client.last_state:
+        all_inps = vmix_client.last_state.get("allInputs", [])
+        def score(inp):
+            s = 0
+            if inp.get("isActive") or inp.get("isPreview"):
+                s += 20
+            if inp.get("isLiveSource"):
+                s += 10
+            return s
+        sorted_inps = sorted(all_inps, key=score, reverse=True)
+        inputs = [str(inp.get("number")) for inp in sorted_inps[:cap]]
+    config_manager.update({"priorityInputs": inputs})
+    await vmix_client.poll()
+    return {"success": True, "priorityInputs": inputs}
 
 @app.post("/api/sources/alias")
 async def set_alias(req: AliasRequest, _: bool = Depends(require_auth)):
@@ -313,7 +405,14 @@ async def update_config(req: ConfigUpdateRequest, _: bool = Depends(require_auth
     if req.pollIntervalMs is not None:
         updates["pollIntervalMs"] = int(req.pollIntervalMs)
     if req.previewFps is not None:
-        updates["previewFps"] = min(10.0, max(0.5, float(req.previewFps)))
+        updates["previewFps"] = min(60.0, max(0.5, float(req.previewFps)))
+    if req.backgroundFps is not None:
+        updates["backgroundFps"] = min(5.0, max(0.1, float(req.backgroundFps)))
+    if req.maxPriorityInputs is not None:
+        try:
+            updates["maxPriorityInputs"] = min(50, max(1, int(req.maxPriorityInputs)))
+        except (TypeError, ValueError):
+            pass
     if req.livelanUrl is not None:
         updates["livelanUrl"] = req.livelanUrl.strip()
     if req.mockMode is not None:

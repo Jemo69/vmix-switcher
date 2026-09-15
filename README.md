@@ -134,7 +134,11 @@ The switcher features 3 dedicated operational modes accessible via the top tab b
 - **Change transition:** dropdown at top center (`Fade`, `Cut`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Transition 1/2` + duration).
 - **Preview + Take mode:** Settings ⚙️ → *Switcher Action* → stage in Preview, then **CUT** / **AUTO**.
 - **Hide sources:** *Manage Sources* → toggle off *Display on Switcher* (e.g. audio, color bars). Optional **Display Nickname** per input.
-- **Settings ⚙️:** switcher mode, default transition + duration, vMix host/port, password, poll interval, **Live Preview Refresh Rate** (1–10 fps), **LiveLAN Video URL** (true motion on Program monitors, blank = auto), **Offline Simulator Mode** (rehearse without vMix).
+- **Settings ⚙️:** switcher mode, default transition + duration, vMix host/port, password, poll interval, **Priority pull rate** (1–60 fps), **Eco pull rate** (0.2–5 fps), **max priority inputs** (per venue), **LiveLAN Video URL** (true motion on Program monitors, blank = auto), **Offline Simulator Mode** (rehearse without vMix).
+
+### ⭐ Priority vs Eco tiers (half-half live system)
+Star the inputs that matter (★ on any card, or Manage Sources) and they join the fast tier with the Program/Preview monitors: re-polled up to 60×/s and re-rendered back-to-back as fast as vMix allows. Everything else rides the eco pull (default 1.5 fps) to save network and vMix CPU. Unchanged frames answer `304` (headers only), so high pull rates cost almost nothing on Wi-Fi.
+> Honest physics: vMix renders snapshots one at a time (~1/s shared across inputs). A 30/60 fps pull doesn't mint more renders — it delivers each fresh frame the instant it lands instead of making you wait for the next slow poll. Size the priority list to the wall: fewer picks = faster each.
 
 ### 🎥 True-motion Program video (LiveLAN)
 Snapshots are great for the grid, but motion needs video. vMix's built-in **LiveLAN** streams Program to any browser on the LAN:
@@ -157,7 +161,10 @@ Settings persist in `config.json`:
 | `vmixHost` / `vmixPort` | `127.0.0.1` / `8088` | Where vMix Web Controller lives |
 | `defaultTransition` / `transitionDuration` | `Fade` / `500` | Transition + ms |
 | `switcherMode` | `direct` | `direct` or `preview_take` |
-| `previewFps` | `4` | Live preview snapshot refresh rate (0.5–10 fps). Higher = smoother previews, more load on the vMix PC |
+| `previewFps` | `4` | Priority-tier pull rate in fps (0.5–60): Program/Preview monitors + starred inputs re-poll this fast (cheap re-checks; vMix still renders each snapshot in turn) |
+| `backgroundFps` | `1.5` | Eco-tier pull + render rate in fps (0.1–5) for all non-priority inputs |
+| `priorityInputs` | `[]` | Starred inputs (numbers or keys) on the fast tier — pick via ★ on cards or Manage Sources |
+| `maxPriorityInputs` | `20` | Cap for the priority list (1–50). Each venue sizes its fast tier in Settings ⚙️ |
 | `livelanUrl` | `""` (auto) | Explicit LiveLAN page URL for true-motion Program video. Blank = auto-derive per device from page host + `vmixPort` |
 | `mockMode` | `false` | Simulator when vMix is offline |
 
