@@ -721,6 +721,7 @@ class SwitcherApp {
     if (img.dataset.thumbLoading === '1') return;
 
     img.dataset.thumbLoading = '1';
+    img.dataset.thumbSince = String(Date.now());
     // No cache-buster: the server answers ETag + 304 for unchanged frames, so
     // fast polling is cheap and fresh frames land the instant they render.
     const targetUrl = API.getThumbnailUrl(inputNum);
@@ -758,6 +759,24 @@ class SwitcherApp {
     return this.priorityInputs.has(num) || this.priorityInputs.has(key);
   }
 
+  // Watchdog: a hung preload (flaky Wi-Fi, stalled TCP) must never wedge a
+  // tile on its placeholder forever. Any load older than 12s is released so
+  // the next tick retries. Swept on every fast tick — zero extra timers.
+  resetStaleThumbFlags() {
+    const all = [
+      ...this.dom.sourcesGrid.querySelectorAll('.source-thumb-img'),
+      ...[this.dom.pgmMonitorImg, this.dom.prvMonitorImg, this.dom.mvPgmImg, this.dom.mvPrvImg].filter(Boolean),
+    ];
+    if (this.dom.multiviewCamsGrid) all.push(...this.dom.multiviewCamsGrid.querySelectorAll('.mv-cam-img'));
+    const now = Date.now();
+    all.forEach(img => {
+      if (img.dataset.thumbLoading === '1') {
+        const since = parseInt(img.dataset.thumbSince || '0', 10);
+        if (since && now - since > 12000) img.dataset.thumbLoading = '0';
+      }
+    });
+  }
+
   startThumbnailRefresh() {
     this.stopThumbnailRefresh();
     if (!this.showThumbnails) return;
@@ -766,6 +785,7 @@ class SwitcherApp {
       if (!this.showThumbnails || this.dom.appContainer.classList.contains('hidden')) return;
       if (document.hidden) return;
       if (this.currentView === 'audio') return; // Pause thumbnail requests while in Audio view
+      this.resetStaleThumbFlags();
 
       const eachGrid = (selector, fn) => {
         const imgs = this.dom.sourcesGrid.querySelectorAll(selector);
@@ -963,6 +983,41 @@ class SwitcherApp {
     if (title && el.title !== title) el.title = title;
   }
 
+  // Per-monitor pill: tells the truth about the input SHOWN on that monitor,
+  // not the global pipeline. A placeholder on screen must never wear IMG:LIVE
+  // just because some other input is streaming fine.
+  updateMonitorPill(el, input, state) {
+    if (!el) return;
+    const mode = state.thumbnailMode || 'starting';
+    // Global non-live modes (offline / remote / mock / paused) still win.
+    if (mode !== 'live' && mode !== 'starting') {
+      this.updateThumbPill(el, state);
+      return;
+    }
+    const freshSec = state.snapFreshSec || 20;
+    const maxAgeSec = state.snapMaxAgeSec || 60;
+    const num = input ? (input.number ?? '?') : '?';
+    const age = input ? input.snapAgeSec : null;
+    let text, cls, title;
+    if (typeof age === 'number' && age <= freshSec) {
+      text = 'IMG:LIVE'; cls = 'is-live';
+      title = `Live snapshot of input ${num} (${age}s old)`;
+    } else if (typeof age === 'number' && age <= maxAgeSec) {
+      text = 'IMG:LOAD'; cls = 'is-waiting';
+      title = `Snapshot of input ${num} is ${age}s old — refreshing…`;
+    } else if (input && input.snapError) {
+      text = 'IMG:LOAD'; cls = 'is-waiting';
+      title = `Input ${num} snapshot failing: ${input.snapError}`;
+    } else {
+      text = 'IMG:LOAD'; cls = 'is-waiting';
+      title = `Waiting for first snapshot of input ${num}…`;
+    }
+    if (el.textContent !== text) el.textContent = text;
+    const nextCls = `thumb-mode-pill ${cls}`;
+    if (el.className !== nextCls) el.className = nextCls;
+    if (title && el.title !== title) el.title = title;
+  }
+
   // State Updates & Rendering
   handleStateUpdate(state) {
     this.currentState = state;
@@ -1054,11 +1109,12 @@ class SwitcherApp {
       if (this.liveVideo && !this.livelanUrl) this.applyLiveVideo();
     }
 
-    // Snapshot LIVE vs placeholder pills (vMix has no per-input video API,
-    // but LiveLAN carries true Program motion — marked VIDEO, not IMG).
-    this.updateThumbPill(this.dom.pgmThumbMode, state);
-    this.updateThumbPill(this.dom.prvThumbMode, state);
-    this.updateThumbPill(this.dom.mvThumbMode, state);
+    // Snapshot pills per monitor: each pill reports the snapshot status of
+    // the input actually shown there (a placeholder must never read IMG:LIVE).
+    // LiveLAN true-motion video still overrides Program pills (see below).
+    this.updateMonitorPill(this.dom.pgmThumbMode, activeInput, state);
+    this.updateMonitorPill(this.dom.prvThumbMode, previewInput, state);
+    this.updateMonitorPill(this.dom.mvThumbMode, activeInput, state);
     this.updateVideoPills();
 
     // Update Live Monitor Images — steady-state refresh is owned by the
@@ -1797,6 +1853,7 @@ class SwitcherApp {
           <td>
             <div class="table-title">${this.escapeHtml(inp.title)}</div>
             <div class="table-sub">${this.escapeHtml(inp.shortTitle || '')}</div>
+            ${inp.snapError ? `<div class="table-snap-error" title="${this.escapeHtml(inp.snapError)}">⚠ snapshot failing — hover for reason</div>` : ''}
           </td>
           <td>
             <input type="text"

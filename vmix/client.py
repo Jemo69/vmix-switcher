@@ -47,6 +47,8 @@ class VMixClient:
         self._snap_lock = asyncio.Lock()
         self._snap_pending_keys: set[str] = set()  # never queue duplicate captures for one source
         self._snap_backoff: dict[str, tuple[int, float]] = {}  # key -> (fail streak, next allowed epoch)
+        self._snap_errors: dict[str, str] = {}  # key -> last failure detail (surfaced per input)
+        self._snap_render_ema: Optional[float] = None  # EMA of vMix render round-trip seconds
         self._snap_fail_streak: int = 0
         self._snap_paused_until: float = 0.0
         self._snap_last_success: float = 0.0
@@ -238,6 +240,7 @@ class VMixClient:
                 "isIgnored": is_ignored,
                 "isPriority": is_priority,
                 "snapAgeSec": self._snap_age_for_key(str(inp.get("key") or inp.get("number"))),
+                "snapError": self._snap_errors.get(str(inp.get("key"))) or self._snap_errors.get(str(inp.get("number"))),
             })
 
         visible_inputs = [i for i in all_inputs if not i["isIgnored"]]
@@ -259,6 +262,8 @@ class VMixClient:
             "maxPriorityInputs": config_manager.max_priority_inputs(),
             "livelanUrl": cfg.get("livelanUrl", ""),
             "vmixPort": cfg.get("vmixPort", 8088),
+            "snapFreshSec": self.SNAP_SUCCESS_FRESH,
+            "snapMaxAgeSec": self.SNAP_MAX_FILE_AGE,
             **self.thumbnail_status(),
         }
 
@@ -283,7 +288,7 @@ class VMixClient:
             full_state.get("maxPriorityInputs"),
             full_state.get("thumbnailMode"),
             len(visible_inputs),
-            tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("volume"), i.get("state"), i.get("signalStatus"), i.get("isPriority"), i.get("customTitle"), i.get("isIgnored")) for i in all_inputs)
+            tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("volume"), i.get("state"), i.get("signalStatus"), i.get("isPriority"), i.get("customTitle"), i.get("isIgnored"), i.get("snapError")) for i in all_inputs)
         )
 
         now = time.time()
@@ -495,8 +500,12 @@ class VMixClient:
         # so a fast input evaluated earlier in every burst (e.g. a monitor)
         # could defer the rest forever. Inputs that never captured, or are
         # overdue past 3x their interval, bypass the pacing window.
+        # The pacing floor itself adapts to measured vMix render cost so rapid
+        # successive SnapshotInput calls don't pile into GDI+ faults.
         overdue = (mtime <= 0) or ((now - mtime) > 3 * interval)
-        if not overdue and (now - self._snap_last_any) < self._snap_any_interval():
+        render_cost = self._snap_render_ema if self._snap_render_ema else 0.3
+        pace = max(self._snap_any_interval(), min(3.0, render_cost * 1.5))
+        if not overdue and (now - self._snap_last_any) < pace:
             return False
         self._snap_last_any = now
         self._snap_pending_keys.add(key)
@@ -645,7 +654,15 @@ class VMixClient:
                     {"Function": "SnapshotInput", "Input": key, "Value": temp_path}
                 )
                 url = f"http://{host}:{port}/api/?{query}"
+                render_start = time.time()
                 await asyncio.to_thread(self._fetch_url, url, self.SNAP_FUNCTION_TIMEOUT)
+                render_dt = time.time() - render_start
+                # EMA of render cost drives adaptive pacing: a slow/choking vMix
+                # box automatically gets breathing room between captures.
+                if self._snap_render_ema is None:
+                    self._snap_render_ema = render_dt
+                else:
+                    self._snap_render_ema += 0.3 * (render_dt - self._snap_render_ema)
 
             # Once the API returns, vMix has finished writing and closed the file.
             # Read and cache the raw JPEG in memory, and atomically replace target path.
@@ -695,9 +712,11 @@ class VMixClient:
         self._snap_fail_streak = 0
         if key:
             self._snap_backoff.pop(str(key), None)
+            self._snap_errors.pop(str(key), None)
 
     def _record_snap_failure(self, key: str, detail: str) -> None:
         self._snap_fail_streak += 1
+        self._snap_errors[str(key)] = detail
         # Per-input backoff: a failing input must not hammer vMix (and starve
         # the inputs that do work). 3s, 6s, 12s… capped at 60s.
         streak, _ = self._snap_backoff.get(str(key), (0, 0.0))

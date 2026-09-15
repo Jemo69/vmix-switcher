@@ -143,7 +143,15 @@ def test_all():
         assert res["active"] == 2, f"Expected active 2 with Transition1, got {res['active']}"
         print("✓ Direct mode Transition1 staging and execution verified")
 
-        # 13. Test Network info endpoint
+        # 13. Test Merge transition in Direct mode
+        status, res = req(f"{base}/api/vmix/switch", "POST", {"input": 3, "transition": "Merge", "duration": 500}, token=token)
+        assert status == 200 and res.get("success") is True
+        time.sleep(0.2)
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        assert res["active"] == 3, f"Expected active 3 with Merge, got {res['active']}"
+        print("✓ Direct mode Merge transition verified")
+
+        # 14. Test Network info endpoint
         status, res = req(f"{base}/api/system/network", "GET", token=token)
         assert status == 200 and "ips" in res
         assert not any("http://ip:" in u for u in res["ips"]), f"Malformed IP found: {res['ips']}"

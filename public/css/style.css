@@ -2405,6 +2405,17 @@ input:focus-visible + .slider {
   color: var(--ink-3);
 }
 
+.table-snap-error {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--warn);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
 .table-empty {
   padding: 30px;
   text-align: center;

@@ -111,7 +111,7 @@ The switcher features 3 dedicated operational modes accessible via the top tab b
 ### 1. 🎬 Video Switcher Mode
 - **Snapshot Monitors:** Program & Preview snapshots pulled from vMix at the top of the console (IMG:LIVE pill = real image).
 - **Direct Switch vs Preview + Take:** Switch between instant switching or traditional preview staging directly via the mode pills.
-- **Quick Transitions:** Instant **CUT**, **AUTO** with selectable transition types (`Fade`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Trans 1/2`), plus **FTB** and **QuickPlay**.
+- **Quick Transitions:** Instant **CUT**, **AUTO** with selectable transition types (`Fade`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Merge`, `Trans 1/2`), plus **FTB** and **QuickPlay**.
 - **Interactive Broadcast Badges:**
   - **REC:** Tap to start/stop recording with live timer display.
   - **STREAM:** Tap to start/stop streaming.
@@ -131,7 +131,7 @@ The switcher features 3 dedicated operational modes accessible via the top tab b
 - **Dedicated Fullscreen:** One-click expansion for secondary monitors or multiviewer displays.
 
 - **Direct Switch (default):** tap a source → it transitions straight to Program output.
-- **Change transition:** dropdown at top center (`Fade`, `Cut`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Transition 1/2` + duration).
+- **Change transition:** dropdown at top center (`Fade`, `Cut`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Merge`, `Transition 1/2` + duration).
 - **Preview + Take mode:** Settings ⚙️ → *Switcher Action* → stage in Preview, then **CUT** / **AUTO**.
 - **Hide sources:** *Manage Sources* → toggle off *Display on Switcher* (e.g. audio, color bars). Optional **Display Nickname** per input.
 - **Settings ⚙️:** switcher mode, default transition + duration, vMix host/port, password, poll interval, **Priority pull rate** (1–60 fps), **Eco pull rate** (0.2–5 fps), **max priority inputs** (per venue), **LiveLAN Video URL** (true motion on Program monitors, blank = auto), **Offline Simulator Mode** (rehearse without vMix).

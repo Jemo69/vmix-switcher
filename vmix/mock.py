@@ -64,7 +64,7 @@ class MockVMix:
                 self.active = input_num
             else:
                 self.active, self.preview = self.preview, self.active
-        elif fn in ("fade", "zoom", "wipe", "slide", "fly", "crosszoom", "quickplay") or fn.startswith("transition"):
+        elif fn in ("fade", "zoom", "wipe", "slide", "fly", "crosszoom", "merge", "quickplay") or fn.startswith("transition"):
             if input_num:
                 self.preview = self.active
                 self.active = input_num
