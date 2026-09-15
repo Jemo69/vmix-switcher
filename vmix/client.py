@@ -29,7 +29,14 @@ class VMixClient:
     SNAP_SUCCESS_FRESH = 20.0         # file newer than this counts as "live"
     SNAP_BREAKER_TRIPS = 5            # consecutive failures before pausing
     SNAP_BREAKER_PAUSE = 30.0         # pause duration after trips (seconds)
+    SNAP_CHOKE_PAUSE = 120.0          # ...escalated when trips repeat with no success between
     SNAP_FUNCTION_TIMEOUT = 10.0      # HTTP timeout: vMix may block while rendering
+    # Poll rate (HTTP GET thumbnails, cheap ETag/304s) may run at 30-60fps.
+    # Render rate (SnapshotInput to vMix, a full render + JPEG encode each)
+    # must stay sustainable or vMix GDI+ faults and EVERYTHING decays to
+    # placeholders. The floors below decouple the two on purpose.
+    RENDER_MIN_GAP = 0.6              # steady-state minimum seconds between render starts
+    RENDER_BURST_GAP = 0.3            # ...even while converging overdue inputs (never unbounded)
 
     def __init__(self):
         self.connected = False
@@ -49,6 +56,7 @@ class VMixClient:
         self._snap_backoff: dict[str, tuple[int, float]] = {}  # key -> (fail streak, next allowed epoch)
         self._snap_errors: dict[str, str] = {}  # key -> last failure detail (surfaced per input)
         self._snap_render_ema: Optional[float] = None  # EMA of vMix render round-trip seconds
+        self._snap_breaker_escalations: int = 0  # breaker trips with no success between
         self._snap_fail_streak: int = 0
         self._snap_paused_until: float = 0.0
         self._snap_last_success: float = 0.0
@@ -499,13 +507,14 @@ class VMixClient:
         # Starvation guard: the global pacing gate is first-come-first-served,
         # so a fast input evaluated earlier in every burst (e.g. a monitor)
         # could defer the rest forever. Inputs that never captured, or are
-        # overdue past 3x their interval, bypass the pacing window.
-        # The pacing floor itself adapts to measured vMix render cost so rapid
-        # successive SnapshotInput calls don't pile into GDI+ faults.
+        # overdue past 3x their interval, get the tighter burst floor — but the
+        # floor is NEVER removed: uncapped bursts in the failure regime are
+        # exactly how a choking vMix box gets hammered into total decay.
         overdue = (mtime <= 0) or ((now - mtime) > 3 * interval)
         render_cost = self._snap_render_ema if self._snap_render_ema else 0.3
-        pace = max(self._snap_any_interval(), min(3.0, render_cost * 1.5))
-        if not overdue and (now - self._snap_last_any) < pace:
+        pace = max(self.RENDER_MIN_GAP, self._snap_any_interval(), min(3.0, render_cost * 1.5))
+        gap = self.RENDER_BURST_GAP if overdue else pace
+        if (now - self._snap_last_any) < gap:
             return False
         self._snap_last_any = now
         self._snap_pending_keys.add(key)
@@ -710,6 +719,7 @@ class VMixClient:
 
     def _record_snap_success(self, key: str = "") -> None:
         self._snap_fail_streak = 0
+        self._snap_breaker_escalations = 0
         if key:
             self._snap_backoff.pop(str(key), None)
             self._snap_errors.pop(str(key), None)
@@ -728,8 +738,21 @@ class VMixClient:
             # without opening devtools: which input, and why.
             print(f"[snap] input {key} failing ({detail}) — backing off, retrying quietly")
         if self._snap_fail_streak >= self.SNAP_BREAKER_TRIPS:
-            self._snap_paused_until = time.time() + self.SNAP_BREAKER_PAUSE
-            self._set_thumb_status("paused", "Snapshots paused 30s — vMix reported save errors")
+            # Escalation: trips repeating with no success between mean vMix
+            # itself is choking (typically undeleted GDI+ error dialogs on the
+            # vMix PC). Hammering harder only deepens it — cool down longer and
+            # say exactly where to look. Any success resets the escalation.
+            self._snap_breaker_escalations += 1
+            if self._snap_breaker_escalations >= 2:
+                self._snap_paused_until = time.time() + self.SNAP_CHOKE_PAUSE
+                self._set_thumb_status(
+                    "paused",
+                    "vMix isn't answering snapshot requests — check the vMix PC screen "
+                    "for error popups (dismiss any GDI+ dialogs), then wait; retries resume automatically",
+                )
+            else:
+                self._snap_paused_until = time.time() + self.SNAP_BREAKER_PAUSE
+                self._set_thumb_status("paused", "Snapshots paused 30s — vMix reported save errors")
         else:
             self._set_thumb_status("starting", detail)
 
