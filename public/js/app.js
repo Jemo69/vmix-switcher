@@ -627,6 +627,12 @@ class SwitcherApp {
     }
   }
 
+  getInputData(num) {
+    if (!this.currentState || !this.currentState.allInputs) return null;
+    const strNum = String(num);
+    return this.currentState.allInputs.find(i => String(i.number) === strNum || String(i.key) === strNum);
+  }
+
   refreshThumb(img) {
     const inputNum = img.getAttribute('data-thumb-input');
     if (!inputNum) return;
@@ -635,20 +641,51 @@ class SwitcherApp {
     if (img.dataset.thumbLoading === '1') return;
 
     img.dataset.thumbLoading = '1';
-    img.onload = img.onerror = () => { img.dataset.thumbLoading = '0'; };
-    img.src = `${API.getThumbnailUrl(inputNum)}&_t=${Date.now()}`;
+    const targetUrl = `${API.getThumbnailUrl(inputNum)}&_t=${Date.now()}`;
+
+    // Smooth offscreen preload to prevent flicker and blank flash
+    const preloader = new Image();
+    preloader.onload = () => {
+      img.src = preloader.src;
+      img.dataset.thumbLoading = '0';
+      // Trigger a subtle pulse on the live signal indicator
+      const container = img.closest('.source-card, .preview-corner-hero, .multiview-cam-tile, .monitor-screen-wrapper');
+      if (container) {
+        const pulse = container.querySelector('.live-signal-dot, .live-dot-pulse');
+        if (pulse) {
+          pulse.classList.add('pulse-tick');
+          setTimeout(() => pulse.classList.remove('pulse-tick'), 350);
+        }
+      }
+    };
+    preloader.onerror = () => {
+      img.dataset.thumbLoading = '0';
+    };
+    preloader.src = targetUrl;
   }
 
   startThumbnailRefresh() {
     this.stopThumbnailRefresh();
     if (!this.showThumbnails) return;
+    this.refreshTickCount = 0;
     this.thumbTimer = setInterval(() => {
       if (!this.showThumbnails || this.dom.appContainer.classList.contains('hidden')) return;
       if (document.hidden) return;
+      if (this.currentView === 'audio') return; // Pause thumbnail requests while in Audio view
 
-      // Refresh Switcher Grid cards
+      this.refreshTickCount = (this.refreshTickCount + 1) % 60;
+      const isFullTick = (this.refreshTickCount % 5 === 0);
+
+      // Refresh Switcher Grid cards: Live sources (Camera, NDI, Video) every tick; static stills periodically
       const imgs = this.dom.sourcesGrid.querySelectorAll('.source-thumb-img');
-      imgs.forEach(img => this.refreshThumb(img));
+      imgs.forEach(img => {
+        const inpNum = img.getAttribute('data-thumb-input');
+        const inpData = this.getInputData(inpNum);
+        const isLiveFeed = inpData ? inpData.isLiveSource : true;
+        if (isLiveFeed || isFullTick) {
+          this.refreshThumb(img);
+        }
+      });
 
       // Refresh Live Monitors (Program & Preview)
       if (this.currentState) {
@@ -688,7 +725,14 @@ class SwitcherApp {
       // Refresh Multiviewer Camera grid thumbnails
       if (this.dom.multiviewCamsGrid) {
         const mvImgs = this.dom.multiviewCamsGrid.querySelectorAll('.mv-cam-img');
-        mvImgs.forEach(img => this.refreshThumb(img));
+        mvImgs.forEach(img => {
+          const inpNum = img.getAttribute('data-thumb-input');
+          const inpData = this.getInputData(inpNum);
+          const isLiveFeed = inpData ? inpData.isLiveSource : true;
+          if (isLiveFeed || isFullTick) {
+            this.refreshThumb(img);
+          }
+        });
       }
     }, this.getPreviewIntervalMs());
   }
@@ -929,7 +973,10 @@ class SwitcherApp {
         if (badgesRightEl) {
           const overlayHtml = (inp.activeOverlays || []).map(ov => `<span class="overlay-mini-badge">OV${ov}</span>`).join('');
           const audioMuteHtml = inp.muted ? `<span class="audio-mute-badge" title="Muted"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg></span>` : '';
-          const typeHtml = `<span class="source-type-pill">${this.escapeHtml(inp.type || 'Input')}</span>`;
+          const typeLower = (inp.type || '').toLowerCase();
+          const typeLabel = (inp.type === 'DesktopCapture' ? 'Screen' : (inp.type || 'Input'));
+          const liveDotHtml = inp.isLiveSource ? `<span class="live-signal-dot ${inp.isActive ? 'live' : ''}" title="Live motion feed active"></span>` : '';
+          const typeHtml = `<span class="source-type-pill type-${typeLower}">${liveDotHtml}${this.escapeHtml(typeLabel)}</span>`;
           const newBadgesHtml = overlayHtml + audioMuteHtml + typeHtml;
           if (badgesRightEl.innerHTML !== newBadgesHtml) {
             badgesRightEl.innerHTML = newBadgesHtml;
@@ -954,10 +1001,14 @@ class SwitcherApp {
 
       const overlayHtml = (inp.activeOverlays || []).map(ov => `<span class="overlay-mini-badge">OV${ov}</span>`).join('');
       const audioMuteHtml = inp.muted ? `<span class="audio-mute-badge" title="Muted"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg></span>` : '';
+      const typeLower = (inp.type || '').toLowerCase();
+      const typeLabel = (inp.type === 'DesktopCapture' ? 'Screen' : (inp.type || 'Input'));
+      const liveDotHtml = inp.isLiveSource ? `<span class="live-signal-dot ${inp.isActive ? 'live' : ''}" title="Live motion feed active"></span>` : '';
 
       const thumbHtml = this.showThumbnails ? `
         <div class="source-thumb-container">
           <img class="source-thumb-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">
+          ${inp.isLiveSource ? `<span class="live-feed-badge type-${typeLower}"><span class="live-signal-dot"></span>${typeLower.includes('ndi') ? 'NDI' : (typeLower.includes('camera') ? 'CAM' : 'LIVE')}</span>` : ''}
         </div>
       ` : '';
 
@@ -967,7 +1018,7 @@ class SwitcherApp {
           <div class="source-badges-right">
             ${overlayHtml}
             ${audioMuteHtml}
-            <span class="source-type-pill">${inp.type || 'Input'}</span>
+            <span class="source-type-pill type-${typeLower}">${liveDotHtml}${this.escapeHtml(typeLabel)}</span>
           </div>
         </div>
         ${thumbHtml}
@@ -1182,10 +1233,24 @@ class SwitcherApp {
         tile.classList.toggle('is-program', Boolean(inp.isActive));
         tile.classList.toggle('is-preview', Boolean(inp.isPreview));
 
+        const typeLower = (inp.type || '').toLowerCase();
+        let badgeLabel = `CAM ${inp.number}`;
+        if (typeLower.includes('ndi')) badgeLabel = `NDI ${inp.number}`;
+        else if (typeLower.includes('desktop')) badgeLabel = `SCREEN ${inp.number}`;
+        else if (typeLower.includes('video')) badgeLabel = `VIDEO ${inp.number}`;
+
         const statusPill = tile.querySelector('.mv-cam-status-pill');
         if (statusPill) {
-          statusPill.className = `mv-cam-status-pill ${inp.isActive ? 'live' : (inp.isPreview ? 'prv' : '')}`;
-          statusPill.textContent = inp.isActive ? 'ON AIR' : (inp.isPreview ? 'NEXT' : '');
+          const statusText = inp.isActive ? 'ON AIR' : (inp.isPreview ? 'NEXT' : (inp.isLiveSource ? 'LIVE' : ''));
+          statusPill.className = `mv-cam-status-pill ${inp.isActive ? 'live' : (inp.isPreview ? 'prv' : (inp.isLiveSource ? 'feed-live' : ''))}`;
+          statusPill.textContent = statusText;
+        }
+
+        const badgeEl = tile.querySelector('.mv-cam-badge');
+        if (badgeEl) {
+          const liveDot = inp.isLiveSource ? `<span class="live-signal-dot ${inp.isActive ? 'live' : ''}"></span>` : '';
+          badgeEl.className = `mv-cam-badge type-${typeLower}`;
+          badgeEl.innerHTML = `${liveDot}${badgeLabel}`;
         }
 
         const titleEl = tile.querySelector('.mv-cam-title');
@@ -1205,10 +1270,19 @@ class SwitcherApp {
       tile.className = `multiview-cam-tile ${inp.isActive ? 'is-program' : (inp.isPreview ? 'is-preview' : '')}`;
       tile.setAttribute('data-mv-input', inp.number);
 
+      const typeLower = (inp.type || '').toLowerCase();
+      let badgeLabel = `CAM ${inp.number}`;
+      if (typeLower.includes('ndi')) badgeLabel = `NDI ${inp.number}`;
+      else if (typeLower.includes('desktop')) badgeLabel = `SCREEN ${inp.number}`;
+      else if (typeLower.includes('video')) badgeLabel = `VIDEO ${inp.number}`;
+
+      const liveDot = inp.isLiveSource ? `<span class="live-signal-dot ${inp.isActive ? 'live' : ''}"></span>` : '';
+      const statusText = inp.isActive ? 'ON AIR' : (inp.isPreview ? 'NEXT' : (inp.isLiveSource ? 'LIVE' : ''));
+
       tile.innerHTML = `
         <img class="mv-cam-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">
-        <span class="mv-cam-badge">CAM ${inp.number}</span>
-        <span class="mv-cam-status-pill ${inp.isActive ? 'live' : (inp.isPreview ? 'prv' : '')}">${inp.isActive ? 'ON AIR' : (inp.isPreview ? 'NEXT' : '')}</span>
+        <span class="mv-cam-badge type-${typeLower}">${liveDot}${badgeLabel}</span>
+        <span class="mv-cam-status-pill ${inp.isActive ? 'live' : (inp.isPreview ? 'prv' : (inp.isLiveSource ? 'feed-live' : ''))}">${statusText}</span>
         <div class="mv-cam-take-action">
           <button type="button" class="mv-take-live-btn" data-input="${inp.number}">Put Live in Corner</button>
         </div>

@@ -14,15 +14,31 @@ class MockVMix:
         self.inputs: List[Dict[str, Any]] = [
             {"number": 1, "key": "mock-1", "title": "Camera 1 - Host", "shortTitle": "Host Cam", "type": "Camera", "state": "Running", "muted": False, "volume": 100},
             {"number": 2, "key": "mock-2", "title": "Camera 2 - Guest", "shortTitle": "Guest Cam", "type": "Camera", "state": "Running", "muted": False, "volume": 100},
-            {"number": 3, "key": "mock-3", "title": "Camera 3 - Wide Shot", "shortTitle": "Wide Shot", "type": "Camera", "state": "Running", "muted": False, "volume": 100},
+            {"number": 3, "key": "mock-3", "title": "NDI 1 - Stage PTZ", "shortTitle": "NDI Stage", "type": "NDI", "state": "Running", "muted": False, "volume": 100},
             {"number": 4, "key": "mock-4", "title": "Screen Share - PPT", "shortTitle": "Screen PPT", "type": "DesktopCapture", "state": "Running", "muted": True, "volume": 0},
-            {"number": 5, "key": "mock-5", "title": "Video Clip - Intro", "shortTitle": "Intro Video", "type": "Video", "state": "Paused", "muted": False, "volume": 100},
+            {"number": 5, "key": "mock-5", "title": "Video Clip - Intro", "shortTitle": "Intro Video", "type": "Video", "state": "Running", "muted": False, "volume": 100},
             {"number": 6, "key": "mock-6", "title": "Lower Third - Speaker", "shortTitle": "Lower Third", "type": "Title", "state": "Running", "muted": True, "volume": 0},
             {"number": 7, "key": "mock-7", "title": "Microphone Main", "shortTitle": "Mic Main", "type": "Audio", "state": "Running", "muted": False, "volume": 90},
             {"number": 8, "key": "mock-8", "title": "Color Bars / Test Pattern", "shortTitle": "Test Bars", "type": "Colour", "state": "Running", "muted": True, "volume": 0},
         ]
 
     def get_state(self) -> Dict[str, Any]:
+        LIVE_TYPES = ("camera", "ndi", "desktop", "video", "call", "stream", "replay")
+        processed_inputs = []
+        for inp in self.inputs:
+            inp_type = (inp.get("type") or "").lower()
+            is_live = any(t in inp_type for t in LIVE_TYPES)
+            state = inp.get("state", "Running")
+            signal_status = "live" if is_live and state.lower() in ("running", "active", "playing") else ("standby" if is_live else "static")
+            processed_inputs.append({
+                **inp,
+                "isActive": int(inp["number"]) == int(self.active),
+                "isPreview": int(inp["number"]) == int(self.preview),
+                "activeOverlays": [int(k) for k, v in self.overlays.items() if v is not None and int(v) == int(inp["number"])],
+                "isLiveSource": is_live,
+                "signalStatus": signal_status
+            })
+
         return {
             "version": "Mock-vMix-26.0",
             "edition": "Simulator (Python)",
@@ -35,15 +51,7 @@ class MockVMix:
             "external": self.external,
             "fadeToBlack": self.fade_to_black,
             "overlays": dict(self.overlays),
-            "inputs": [
-                {
-                    **inp,
-                    "isActive": int(inp["number"]) == int(self.active),
-                    "isPreview": int(inp["number"]) == int(self.preview),
-                    "activeOverlays": [int(k) for k, v in self.overlays.items() if v is not None and int(v) == int(inp["number"])]
-                }
-                for inp in self.inputs
-            ]
+            "inputs": processed_inputs
         }
 
     def execute_function(self, func_name: str, params: Dict[str, Any] | None = None) -> Dict[str, Any]:

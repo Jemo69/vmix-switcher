@@ -1052,6 +1052,74 @@ select,
   text-transform: uppercase;
   color: var(--ink-3);
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.source-type-pill.type-ndi {
+  color: #2dd4bf;
+  background: rgba(45, 212, 191, 0.14);
+  border: 1px solid rgba(45, 212, 191, 0.35);
+  padding: 1px 5px;
+  border-radius: var(--r-1);
+  font-weight: 800;
+}
+
+.source-type-pill.type-camera {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.14);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  padding: 1px 5px;
+  border-radius: var(--r-1);
+  font-weight: 800;
+}
+
+.source-type-pill.type-video,
+.source-type-pill.type-videolist {
+  color: #c084fc;
+  background: rgba(192, 132, 252, 0.14);
+  border: 1px solid rgba(192, 132, 252, 0.35);
+  padding: 1px 5px;
+  border-radius: var(--r-1);
+}
+
+.source-type-pill.type-desktopcapture {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  padding: 1px 5px;
+  border-radius: var(--r-1);
+}
+
+.live-signal-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  display: inline-block;
+  box-shadow: 0 0 4px #10b981;
+  vertical-align: middle;
+  animation: liveSignalGlow 2.2s infinite ease-in-out;
+}
+
+.live-signal-dot.live {
+  background: #ef4444;
+  box-shadow: 0 0 5px #ef4444;
+}
+
+@keyframes liveSignalGlow {
+  0%, 100% { opacity: 0.7; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 7px currentColor; }
+}
+
+.live-signal-dot.pulse-tick {
+  animation: liveSignalTick 0.35s ease-out;
+}
+
+@keyframes liveSignalTick {
+  0% { transform: scale(1.5); filter: brightness(1.6); }
+  100% { transform: scale(1); }
 }
 
 .source-card.is-program .source-type-pill,
@@ -1080,6 +1148,7 @@ select,
 }
 
 .source-thumb-container {
+  position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
   margin: var(--s-2) 0;
@@ -1089,11 +1158,41 @@ select,
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.live-feed-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--r-1);
+  color: #fff;
+  pointer-events: none;
+}
+
+.live-feed-badge.type-ndi {
+  border-color: rgba(45, 212, 191, 0.4);
+  color: #2dd4bf;
+}
+
+.live-feed-badge.type-camera {
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+}
+
 .source-thumb-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  transition: opacity 0.15s ease-out;
 }
 
 .source-title-main {
@@ -1721,6 +1820,21 @@ select,
   background: rgba(0, 0, 0, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: var(--r-1);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mv-cam-badge.type-ndi {
+  border-color: rgba(45, 212, 191, 0.5);
+  color: #2dd4bf;
+  background: rgba(2, 26, 25, 0.85);
+}
+
+.mv-cam-badge.type-camera {
+  border-color: rgba(56, 189, 248, 0.5);
+  color: #38bdf8;
+  background: rgba(15, 23, 42, 0.85);
 }
 
 .mv-cam-status-pill {
@@ -1744,6 +1858,13 @@ select,
 .mv-cam-status-pill.prv {
   display: block;
   background: var(--next-fill);
+}
+
+.mv-cam-status-pill.feed-live {
+  display: block;
+  background: rgba(16, 185, 129, 0.25);
+  border: 1px solid rgba(16, 185, 129, 0.5);
+  color: #34d399;
 }
 
 .mv-cam-take-action {

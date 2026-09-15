@@ -9,20 +9,24 @@ from .config import config_manager
 from .mock import mock_vmix
 
 class VMixClient:
-    # Snapshot budget: vMix renders + JPEG-encodes each SnapshotInput on the
-    # live production PC, and overlapping Photo.Save calls to the same file
-    # make vMix pop "A generic error occurred in GDI+" dialogs. So: renders
-    # are serialized behind a lock with a patient timeout (never overlap,
-    # never retry-blind), the rhythm is gentle (stills barely change), and a
-    # circuit breaker pauses all triggers if vMix reports save errors.
-    SNAP_MIN_ANY_INTERVAL = 2.0     # min seconds between any two snapshot triggers
-    SNAP_MIN_MONITOR_INTERVAL = 5.0  # active / preview inputs (what's on air)
-    SNAP_MIN_INPUT_INTERVAL = 15.0   # everything else (stills don't change)
-    SNAP_MAX_FILE_AGE = 60.0        # serve files up to this old while revalidating
-    SNAP_SUCCESS_FRESH = 30.0       # file newer than this counts as "live"
-    SNAP_BREAKER_TRIPS = 3          # consecutive failures before pausing
-    SNAP_BREAKER_PAUSE = 60.0       # pause duration after trips (seconds)
-    SNAP_FUNCTION_TIMEOUT = 12.0    # HTTP timeout: vMix may block while rendering
+    # Snapshot budget & live pipeline:
+    # Live moving video feeds (Camera, NDI, Video, Desktop) refresh rapidly to
+    # provide a true live broadcast confidence feeling, while static sources (Color bars,
+    # images, titles) stay on a gentle rhythm to preserve PC and network resources.
+    # Atomic temporary file writes prevent GDI+ sharing violations on Windows.
+    LIVE_SOURCE_TYPES = {
+        "camera", "ndi", "desktopcapture", "video", "videolist",
+        "vmixcall", "stream", "replay", "source"
+    }
+    SNAP_MIN_ANY_INTERVAL = 0.4       # min seconds between any two snapshot triggers (responsive cycling)
+    SNAP_MIN_MONITOR_INTERVAL = 1.0   # active / preview inputs (live on air)
+    SNAP_MIN_LIVE_INTERVAL = 2.5      # live video feeds (Camera, NDI, Video)
+    SNAP_MIN_STATIC_INTERVAL = 45.0   # static stills (titles, image, colour, audio)
+    SNAP_MAX_FILE_AGE = 60.0          # serve files up to this old while revalidating
+    SNAP_SUCCESS_FRESH = 20.0         # file newer than this counts as "live"
+    SNAP_BREAKER_TRIPS = 5            # consecutive failures before pausing
+    SNAP_BREAKER_PAUSE = 30.0         # pause duration after trips (seconds)
+    SNAP_FUNCTION_TIMEOUT = 10.0      # HTTP timeout: vMix may block while rendering
 
     def __init__(self):
         self.connected = False
@@ -166,6 +170,16 @@ class VMixClient:
             # Active overlays for this input
             active_overlays = [int(k) for k, v in overlays.items() if k.isdigit() and (v == num or str(v) == key)]
 
+            # Live motion signal classification
+            type_lower = inp_type.lower()
+            is_live_source = any(t in type_lower for t in self.LIVE_SOURCE_TYPES)
+            if not is_live_source:
+                signal_status = "static"
+            elif (state or "").lower() in ("running", "active", "playing"):
+                signal_status = "live"
+            else:
+                signal_status = "standby"
+
             inputs.append({
                 "number": num,
                 "key": key,
@@ -177,7 +191,9 @@ class VMixClient:
                 "volume": volume,
                 "isActive": is_active,
                 "isPreview": is_preview,
-                "activeOverlays": active_overlays
+                "activeOverlays": active_overlays,
+                "isLiveSource": is_live_source,
+                "signalStatus": signal_status
             })
 
         return {
@@ -447,7 +463,7 @@ class VMixClient:
             self._snap_last_success = max(self._snap_last_success, mtime)
 
         paused = now < self._snap_paused_until
-        interval = self.SNAP_MIN_MONITOR_INTERVAL if self._is_monitor_input(key) else self.SNAP_MIN_INPUT_INTERVAL
+        interval = self._get_input_interval(key)
         due = (mtime <= 0) or ((now - mtime) > interval)
         if due and not paused and (now - self._snap_last_any) >= self.SNAP_MIN_ANY_INTERVAL:
             self._snap_last_any = now
@@ -478,20 +494,45 @@ class VMixClient:
         return self._svg_bytes(str(target_id))
 
     async def _trigger_snapshot_guarded(self, key: str, path: str) -> None:
-        # One render at a time: overlapping Photo.Save calls to the same file
-        # are what made vMix pop "A generic error occurred in GDI+" dialogs.
-        # The HTTP call itself can block while vMix renders, so wait patiently
-        # instead of timing out early and firing duplicates on top of it.
+        # Atomic snapshot write:
+        # vMix writes to a unique temporary file path. This ensures vMix's .NET GDI+
+        # Bitmap.Save never collides with any concurrent read from Python, preventing
+        # the infamous "A generic error occurred in GDI+" sharing violation.
+        import os
+        safe_key = "".join(c if (c.isalnum() or c in ("-", "_")) else "_" for c in str(key))
+        temp_filename = f"snap_{safe_key[:32]}_{int(time.time() * 1000)}.jpg"
+        temp_path = os.path.join(self._snap_dir_path(), temp_filename)
+
         try:
             async with self._snap_lock:
                 cfg = config_manager.get()
                 host = cfg.get("vmixHost", "127.0.0.1")
                 port = cfg.get("vmixPort", 8088)
                 query = urllib.parse.urlencode(
-                    {"Function": "SnapshotInput", "Input": key, "Value": path}
+                    {"Function": "SnapshotInput", "Input": key, "Value": temp_path}
                 )
                 url = f"http://{host}:{port}/api/?{query}"
                 await asyncio.to_thread(self._fetch_url, url, self.SNAP_FUNCTION_TIMEOUT)
+
+            # Once the API returns, vMix has finished writing and closed the file.
+            # Read and cache the raw JPEG in memory, and atomically replace target path.
+            if os.path.isfile(temp_path):
+                try:
+                    with open(temp_path, "rb") as fh:
+                        raw = fh.read()
+                    mime = self._sniff_image_mime(raw) or "image/jpeg"
+                    cache_key = str(key)
+                    self._thumb_cache[cache_key] = (time.time(), raw, mime)
+                    try:
+                        os.replace(temp_path, path)
+                    except OSError:
+                        pass
+                finally:
+                    if os.path.isfile(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except OSError:
+                            pass
         except Exception as err:
             self._record_snap_failure(f"Snapshot failed: {err}")
         else:
@@ -504,9 +545,37 @@ class VMixClient:
         self._snap_fail_streak += 1
         if self._snap_fail_streak >= self.SNAP_BREAKER_TRIPS:
             self._snap_paused_until = time.time() + self.SNAP_BREAKER_PAUSE
-            self._set_thumb_status("paused", "Snapshots paused 60s — vMix reported save errors")
+            self._set_thumb_status("paused", "Snapshots paused 30s — vMix reported save errors")
         else:
             self._set_thumb_status("starting", detail)
+
+    def _get_input_data(self, target_id: Any) -> Optional[Dict[str, Any]]:
+        tid = str(target_id)
+        if self.last_state:
+            for inp in self.last_state.get("allInputs", []):
+                if str(inp.get("number")) == tid or str(inp.get("key")) == tid:
+                    return inp
+        return None
+
+    def _is_live_source(self, key: str) -> bool:
+        """True for live moving video feeds (Camera, NDI, Desktop, Video, Call)"""
+        inp = self._get_input_data(key)
+        if not inp:
+            return False
+        inp_type = str(inp.get("type", "")).lower()
+        return any(t in inp_type for t in self.LIVE_SOURCE_TYPES)
+
+    def _get_input_interval(self, key: str) -> float:
+        """Dynamic refresh rhythm:
+        - Monitors (Program/Preview): 1.0s (smooth live feel)
+        - Live sources (Camera, NDI, Video): 2.5s
+        - Static stills (Colour, Title, Image, Audio): 45.0s
+        """
+        if self._is_monitor_input(key):
+            return self.SNAP_MIN_MONITOR_INTERVAL
+        if self._is_live_source(key):
+            return self.SNAP_MIN_LIVE_INTERVAL
+        return self.SNAP_MIN_STATIC_INTERVAL
 
     def _is_monitor_input(self, key: str) -> bool:
         """True when this input is currently routed to Program or Preview
@@ -699,9 +768,47 @@ class VMixClient:
   <text x="160" y="163" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#f8fafc" text-anchor="middle">{title[:28]}</text>
 </svg>'''
 
-        # 5. Studio Camera (Default)
+        # 5. NDI Video Source (Live IP Feed)
+        if "ndi" in type_lower or "ndi" in title_lower:
+            time_tc = time.strftime("%H:%M:%S")
+            tc_frame = int((time.time() * 10) % 60)
+            return f'''<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+  <defs>
+    <linearGradient id="ndibg{input_id}" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#042f2e"/>
+      <stop offset="100%" stop-color="#021a19"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="180" fill="url(#ndibg{input_id})"/>
+  <!-- NDI Video Matrix Grid -->
+  <path d="M 30 50 L 290 50 M 30 90 L 290 90 M 30 130 L 290 130" stroke="#0d9488" stroke-width="0.75" opacity="0.3"/>
+  <path d="M 80 20 L 80 160 M 160 20 L 160 160 M 240 20 L 240 160" stroke="#0d9488" stroke-width="0.75" opacity="0.3"/>
+  <!-- NDI Badge & Network Pulse -->
+  <rect x="25" y="65" width="60" height="28" rx="4" fill="#0d9488"/>
+  <text x="55" y="84" font-family="-apple-system, sans-serif" font-size="14" font-weight="900" fill="#ffffff" text-anchor="middle">NDI®</text>
+  <circle cx="160" cy="80" r="26" fill="#115e59" stroke="#14b8a6" stroke-width="2"/>
+  <polygon points="152,68 174,80 152,92" fill="#2dd4bf"/>
+  <!-- Live Signal Pill -->
+  <rect x="220" y="68" width="75" height="22" rx="3" fill="rgba(13, 148, 136, 0.25)" stroke="#14b8a6" stroke-width="1"/>
+  <circle cx="230" cy="79" r="4" fill="#2dd4bf"/>
+  <text x="260" y="83" font-family="-apple-system, sans-serif" font-size="10" font-weight="bold" fill="#2dd4bf" text-anchor="middle">IP: LIVE</text>
+  <!-- Frame & Tally -->
+  <rect x="0" y="0" width="320" height="180" fill="none" stroke="{border_stroke}" stroke-width="6"/>
+  <rect x="10" y="10" width="55" height="24" rx="4" fill="{tally_bg}"/>
+  <text x="37" y="27" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">IN {input_id}</text>
+  <!-- Top Right Timecode -->
+  <rect x="195" y="10" width="115" height="20" rx="3" fill="rgba(0,0,0,0.6)"/>
+  <text x="252" y="24" font-family="monospace" font-size="10" font-weight="bold" fill="#2dd4bf" text-anchor="middle">NDI {time_tc}:{tc_frame:02d}</text>
+  <!-- Bottom info bar -->
+  <rect x="10" y="146" width="300" height="24" rx="4" fill="rgba(0,0,0,0.8)"/>
+  <text x="160" y="163" font-family="-apple-system, sans-serif" font-size="13" font-weight="bold" fill="#ffffff" text-anchor="middle">{title[:28]}</text>
+</svg>'''
+
+        # 6. Studio Camera (Default)
         cam_colors = ["#1e293b", "#0f172a", "#172554", "#14532d", "#312e81"]
         bg_c = cam_colors[int(input_id) % len(cam_colors)] if str(input_id).isdigit() else "#0f172a"
+        time_tc = time.strftime("%H:%M:%S")
+        tc_frame = int((time.time() * 10) % 60)
 
         return f'''<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
   <defs>
@@ -723,9 +830,9 @@ class VMixClient:
   <rect x="0" y="0" width="320" height="180" fill="none" stroke="{border_stroke}" stroke-width="6"/>
   <rect x="10" y="10" width="55" height="24" rx="4" fill="{tally_bg}"/>
   <text x="37" y="27" font-family="-apple-system, sans-serif" font-size="12" font-weight="bold" fill="#fff" text-anchor="middle">IN {input_id}</text>
-  <!-- Top Right 1080p Badge -->
-  <rect x="240" y="10" width="70" height="20" rx="3" fill="rgba(0,0,0,0.6)"/>
-  <text x="275" y="24" font-family="-apple-system, sans-serif" font-size="10" font-weight="bold" fill="#38bdf8" text-anchor="middle">1080p60</text>
+  <!-- Top Right Live TC & 1080p Badge -->
+  <rect x="195" y="10" width="115" height="20" rx="3" fill="rgba(0,0,0,0.6)"/>
+  <text x="252" y="24" font-family="monospace" font-size="10" font-weight="bold" fill="#38bdf8" text-anchor="middle">REC {time_tc}:{tc_frame:02d}</text>
   <!-- Bottom info bar -->
   <rect x="10" y="146" width="300" height="24" rx="4" fill="rgba(0,0,0,0.75)"/>
   <text x="160" y="163" font-family="-apple-system, sans-serif" font-size="13" font-weight="bold" fill="#ffffff" text-anchor="middle">{title[:28]}</text>
