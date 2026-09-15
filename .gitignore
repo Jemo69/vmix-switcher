@@ -39,3 +39,4 @@ Thumbs.db
 
 # PyInstaller
 *.spec
+.gstack/

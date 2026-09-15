@@ -55,6 +55,7 @@ class VMixClient:
         self._snap_pending_keys: set[str] = set()  # never queue duplicate captures for one source
         self._snap_backoff: dict[str, tuple[int, float]] = {}  # key -> (fail streak, next allowed epoch)
         self._snap_errors: dict[str, str] = {}  # key -> last failure detail (surfaced per input)
+        self._snap_waiting: dict[str, float] = {}  # key -> first skipped epoch (fair queue)
         self._snap_render_ema: Optional[float] = None  # EMA of vMix render round-trip seconds
         self._snap_breaker_escalations: int = 0  # breaker trips with no success between
         self._snap_fail_streak: int = 0
@@ -504,22 +505,61 @@ class VMixClient:
             return False
         if key in self._snap_pending_keys:
             return False
-        # Starvation guard: the global pacing gate is first-come-first-served,
-        # so a fast input evaluated earlier in every burst (e.g. a monitor)
-        # could defer the rest forever. Inputs that never captured, or are
-        # overdue past 3x their interval, get the tighter burst floor — but the
-        # floor is NEVER removed: uncapped bursts in the failure regime are
-        # exactly how a choking vMix box gets hammered into total decay.
+        # Fair scheduling: the pace gate alone lets always-due inputs (monitors
+        # at fast pull rates) win every race, starving the wall while looking
+        # healthy. Skipped inputs join a queue; each open slot goes to the
+        # longest-waiting demanded input, so every input provably gets a turn.
         overdue = (mtime <= 0) or ((now - mtime) > 3 * interval)
         render_cost = self._snap_render_ema if self._snap_render_ema else 0.3
         pace = max(self.RENDER_MIN_GAP, self._snap_any_interval(), min(3.0, render_cost * 1.5))
         gap = self.RENDER_BURST_GAP if overdue else pace
         if (now - self._snap_last_any) < gap:
+            self._snap_waiting.setdefault(str(key), now)
+            self._prune_waiting(now)
             return False
+        served = self._serve_oldest_waiter(exclude=str(key), now=now)
+        if served is not None:
+            # Gave this slot to a hungrier input; self stays due for next time.
+            self._snap_waiting.setdefault(str(key), now)
+            return False
+        self._snap_waiting.pop(str(key), None)
         self._snap_last_any = now
         self._snap_pending_keys.add(key)
-        asyncio.create_task(self._trigger_snapshot_guarded(key, path))
+        try:
+            asyncio.create_task(self._trigger_snapshot_guarded(key, path))
+        except RuntimeError:
+            self._snap_pending_keys.discard(key)
+            return False
         return True
+
+    def _prune_waiting(self, now: float) -> None:
+        for k, ts in list(self._snap_waiting.items()):
+            if now - ts > 60.0:
+                self._snap_waiting.pop(k, None)
+
+    def _serve_oldest_waiter(self, exclude: str, now: float) -> Optional[str]:
+        """Fire the longest-waiting demanded input that is still eligible.
+        Returns its key, or None if nobody qualifies."""
+        for key in sorted(self._snap_waiting, key=lambda k: self._snap_waiting[k]):
+            if key == exclude or key in self._snap_pending_keys:
+                continue
+            if now < self._snap_backoff.get(key, (0, 0.0))[1]:
+                continue
+            fs = self._snap_file_stat(key)
+            wmtime = fs[0] if fs else 0.0
+            if wmtime > 0 and (now - wmtime) <= self._get_input_interval(key):
+                self._snap_waiting.pop(key, None)
+                continue
+            try:
+                asyncio.create_task(
+                    self._trigger_snapshot_guarded(key, self._snap_path_for_key(key)))
+            except RuntimeError:
+                return None
+            self._snap_waiting.pop(key, None)
+            self._snap_pending_keys.add(key)
+            self._snap_last_any = now
+            return key
+        return None
 
     def _snap_any_interval(self) -> float:
         # Scale pacing with priority framerate (down to 16ms for 60fps)

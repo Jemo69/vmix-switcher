@@ -713,7 +713,14 @@ class SwitcherApp {
     return this.currentState.allInputs.find(i => String(i.number) === strNum || String(i.key) === strNum);
   }
 
-  refreshThumb(img) {
+  // Thumbnail refresh via fetch() + blob swap. Rationale, learned the hard
+  // way: bare `new Image().src = url` preloads can settle (load AND error
+  // handlers fire) without any network fetch ever happening and without a
+  // resource-timing entry, freezing tiles on stale bytes with zero signal.
+  // fetch() returns real bytes (or a real 304) every time, and swapping in a
+  // fresh object URL displays exactly the bytes just received — correct by
+  // construction. 304 means "display already current": touch nothing.
+  async refreshThumb(img) {
     const inputNum = img.getAttribute('data-thumb-input');
     if (!inputNum) return;
     this.trackThumbVisibility(img);
@@ -722,29 +729,51 @@ class SwitcherApp {
 
     img.dataset.thumbLoading = '1';
     img.dataset.thumbSince = String(Date.now());
-    // No cache-buster: the server answers ETag + 304 for unchanged frames, so
-    // fast polling is cheap and fresh frames land the instant they render.
     const targetUrl = API.getThumbnailUrl(inputNum);
+    const ctrl = new AbortController();
+    img._thumbAbort = ctrl;
+    const timer = setTimeout(() => { try { ctrl.abort(); } catch {} }, 10000);
+    try {
+      const res = await fetch(targetUrl, {signal: ctrl.signal, cache: 'no-cache'});
+      if (res.status === 304) return; // display already shows current bytes
+      if (!res.ok) return;
+      const blob = await res.blob();
+      if (!blob || !blob.size) return;
+      // The monitor may have been re-routed while we were fetching: never
+      // paint bytes for input A onto a tile now showing input B.
+      if (img.getAttribute('data-thumb-input') !== inputNum) return;
+      const objUrl = URL.createObjectURL(blob);
+      const old = img.dataset.blobUrl;
+      img.dataset.blobUrl = objUrl;
+      img.src = objUrl;
+      if (old) { try { URL.revokeObjectURL(old); } catch {} }
+      this.pulseThumb(img);
+    } catch {
+      // Network hiccup / abort: watchdog + next tick retry.
+    } finally {
+      clearTimeout(timer);
+      if (img._thumbAbort === ctrl) img._thumbAbort = null;
+      img.dataset.thumbLoading = '0';
+    }
+  }
 
-    // Smooth offscreen preload to prevent flicker and blank flash
-    const preloader = new Image();
-    preloader.onload = () => {
-      img.src = preloader.src;
-      img.dataset.thumbLoading = '0';
-      // Trigger a subtle pulse on the live signal indicator
-      const container = img.closest('.source-card, .preview-corner-hero, .multiview-cam-tile, .monitor-screen-wrapper');
-      if (container) {
-        const pulse = container.querySelector('.live-signal-dot, .live-dot-pulse');
-        if (pulse) {
-          pulse.classList.add('pulse-tick');
-          setTimeout(() => pulse.classList.remove('pulse-tick'), 350);
-        }
-      }
-    };
-    preloader.onerror = () => {
-      img.dataset.thumbLoading = '0';
-    };
-    preloader.src = targetUrl;
+  revokeImgBlob(img) {
+    const old = img && img.dataset ? img.dataset.blobUrl : null;
+    if (old) {
+      try { URL.revokeObjectURL(old); } catch {}
+      img.dataset.blobUrl = '';
+    }
+  }
+
+  pulseThumb(img) {
+    // Subtle pulse on the live signal indicator after a fresh frame lands.
+    const container = img.closest('.source-card, .preview-corner-hero, .multiview-cam-tile, .monitor-screen-wrapper');
+    if (!container) return;
+    const pulse = container.querySelector('.live-signal-dot, .live-dot-pulse');
+    if (pulse) {
+      pulse.classList.add('pulse-tick');
+      setTimeout(() => pulse.classList.remove('pulse-tick'), 350);
+    }
   }
 
   // Tier membership: monitors are always priority; grid tiles follow the
@@ -772,7 +801,10 @@ class SwitcherApp {
     all.forEach(img => {
       if (img.dataset.thumbLoading === '1') {
         const since = parseInt(img.dataset.thumbSince || '0', 10);
-        if (since && now - since > 12000) img.dataset.thumbLoading = '0';
+        if (since && now - since > 12000) {
+          img.dataset.thumbLoading = '0';
+          img._preloader = null;
+        }
       }
     });
   }
@@ -803,24 +835,22 @@ class SwitcherApp {
         // Video mode covers Program with the LiveLAN stream: skip its snapshot
         // polling entirely so weak Wi-Fi + the vMix PC get real relief.
         const pgmSnapshots = !this.liveVideo;
-        // Input changed on a monitor: force an immediate re-fetch (bypasses load gating)
+        // Input changed on a monitor: abort the old flight and pull now.
+        const retargetTick = (img, num, force) => {
+          if (!img) return;
+          try { if (img._thumbAbort) img._thumbAbort.abort(); } catch {}
+          img._thumbAbort = null;
+          img.dataset.thumbLoading = '0';
+          img.setAttribute('data-thumb-input', num);
+          if (force) this.refreshThumb(img);
+        };
         if (activeNum !== this.lastMonitoredActive) {
           this.lastMonitoredActive = activeNum;
-          [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => {
-            if (!img) return;
-            img.dataset.thumbLoading = '0';
-            img.setAttribute('data-thumb-input', activeNum);
-            if (pgmSnapshots) img.src = API.getThumbnailUrl(activeNum);
-          });
+          [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => retargetTick(img, activeNum, pgmSnapshots));
         }
         if (previewNum !== this.lastMonitoredPreview) {
           this.lastMonitoredPreview = previewNum;
-          [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => {
-            if (!img) return;
-            img.dataset.thumbLoading = '0';
-            img.setAttribute('data-thumb-input', previewNum);
-            img.src = API.getThumbnailUrl(previewNum);
-          });
+          [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => retargetTick(img, previewNum, true));
         }
 
         [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => {
@@ -1122,16 +1152,21 @@ class SwitcherApp {
     // touch the <img> when the routed input number actually changed, so a
     // state broadcast every ~300ms doesn't restart every image download and
     // hammer vMix into timeouts (which used to fall back to SVG placeholders).
+    // Retarget a monitor img to a new input: abort any in-flight fetch for the
+    // old input (its bytes must never land here) and pull the new one now.
     const now = Date.now();
     const pgmSnapshots = !this.liveVideo;
+    const retarget = (img, num, force) => {
+      if (!img) return;
+      try { if (img._thumbAbort) img._thumbAbort.abort(); } catch {}
+      img._thumbAbort = null;
+      img.dataset.thumbLoading = '0';
+      img.setAttribute('data-thumb-input', num);
+      if (force) this.refreshThumb(img);
+    };
     if (activeNum !== this.lastMonitoredActive) {
       this.lastMonitoredActive = activeNum;
-      [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => {
-        if (!img) return;
-        img.dataset.thumbLoading = '0';
-        img.setAttribute('data-thumb-input', activeNum);
-        if (pgmSnapshots) img.src = API.getThumbnailUrl(activeNum);
-      });
+      [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => retarget(img, activeNum, pgmSnapshots));
     } else {
       [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => {
         if (img && !img.getAttribute('data-thumb-input')) img.setAttribute('data-thumb-input', activeNum);
@@ -1139,12 +1174,7 @@ class SwitcherApp {
     }
     if (previewNum !== this.lastMonitoredPreview) {
       this.lastMonitoredPreview = previewNum;
-      [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => {
-        if (!img) return;
-        img.dataset.thumbLoading = '0';
-        img.setAttribute('data-thumb-input', previewNum);
-        img.src = API.getThumbnailUrl(previewNum);
-      });
+      [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => retarget(img, previewNum, true));
     } else {
       [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => {
         if (img && !img.getAttribute('data-thumb-input')) img.setAttribute('data-thumb-input', previewNum);
@@ -1368,6 +1398,7 @@ class SwitcherApp {
       fragment.appendChild(card);
     });
 
+    this.dom.sourcesGrid.querySelectorAll('img').forEach(img => this.revokeImgBlob(img));
     this.dom.sourcesGrid.innerHTML = '';
     this.dom.sourcesGrid.appendChild(fragment);
   }
@@ -1672,6 +1703,7 @@ class SwitcherApp {
       fragment.appendChild(tile);
     });
 
+    this.dom.multiviewCamsGrid.querySelectorAll('img').forEach(img => this.revokeImgBlob(img));
     this.dom.multiviewCamsGrid.innerHTML = '';
     this.dom.multiviewCamsGrid.appendChild(fragment);
   }
