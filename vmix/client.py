@@ -18,9 +18,9 @@ class VMixClient:
         "camera", "ndi", "desktopcapture", "video", "videolist",
         "vmixcall", "stream", "replay", "source"
     }
-    SNAP_MIN_ANY_INTERVAL = 0.4       # min seconds between any two snapshot triggers (responsive cycling)
-    SNAP_MIN_MONITOR_INTERVAL = 1.0   # active / preview inputs (live on air)
-    SNAP_MIN_LIVE_INTERVAL = 2.5      # live video feeds (Camera, NDI, Video)
+    SNAP_MIN_ANY_INTERVAL = 0.18      # global pacing, lets the wall cycle through live inputs quickly
+    SNAP_MIN_MONITOR_INTERVAL = 0.25  # active / preview inputs, kept at the configured preview cadence
+    SNAP_MIN_LIVE_INTERVAL = 0.75     # Camera / NDI feeds, enough motion without overwhelming vMix
     SNAP_MIN_STATIC_INTERVAL = 45.0   # static stills (titles, image, colour, audio)
     SNAP_MAX_FILE_AGE = 60.0          # serve files up to this old while revalidating
     SNAP_SUCCESS_FRESH = 20.0         # file newer than this counts as "live"
@@ -42,6 +42,7 @@ class VMixClient:
         self._snap_dir: Optional[str] = None
         self._snap_last_any: float = 0.0
         self._snap_lock = asyncio.Lock()
+        self._snap_pending_keys: set[str] = set()  # never queue duplicate captures for one source
         self._snap_fail_streak: int = 0
         self._snap_paused_until: float = 0.0
         self._snap_last_success: float = 0.0
@@ -246,6 +247,8 @@ class VMixClient:
             "transitionDuration": cfg.get("transitionDuration", 500),
             "switcherMode": cfg.get("switcherMode", "direct"),
             "previewFps": self._preview_fps(),
+            "livelanUrl": cfg.get("livelanUrl", ""),
+            "vmixPort": cfg.get("vmixPort", 8088),
             **self.thumbnail_status(),
         }
 
@@ -267,7 +270,7 @@ class VMixClient:
             full_state.get("previewFps"),
             full_state.get("thumbnailMode"),
             len(visible_inputs),
-            tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("volume"), i.get("customTitle"), i.get("isIgnored")) for i in all_inputs)
+            tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("volume"), i.get("state"), i.get("signalStatus"), i.get("customTitle"), i.get("isIgnored")) for i in all_inputs)
         )
 
         now = time.time()
@@ -465,8 +468,9 @@ class VMixClient:
         paused = now < self._snap_paused_until
         interval = self._get_input_interval(key)
         due = (mtime <= 0) or ((now - mtime) > interval)
-        if due and not paused and (now - self._snap_last_any) >= self.SNAP_MIN_ANY_INTERVAL:
+        if due and not paused and key not in self._snap_pending_keys and (now - self._snap_last_any) >= self.SNAP_MIN_ANY_INTERVAL:
             self._snap_last_any = now
+            self._snap_pending_keys.add(key)
             asyncio.create_task(self._trigger_snapshot_guarded(key, path))
 
         if mtime > 0 and (now - mtime) <= self.SNAP_MAX_FILE_AGE:
@@ -537,6 +541,8 @@ class VMixClient:
             self._record_snap_failure(f"Snapshot failed: {err}")
         else:
             self._record_snap_success()
+        finally:
+            self._snap_pending_keys.discard(key)
 
     def _record_snap_success(self) -> None:
         self._snap_fail_streak = 0
@@ -566,15 +572,14 @@ class VMixClient:
         return any(t in inp_type for t in self.LIVE_SOURCE_TYPES)
 
     def _get_input_interval(self, key: str) -> float:
-        """Dynamic refresh rhythm:
-        - Monitors (Program/Preview): 1.0s (smooth live feel)
-        - Live sources (Camera, NDI, Video): 2.5s
-        - Static stills (Colour, Title, Image, Audio): 45.0s
-        """
+        """Dynamic refresh rhythm paced by the configured preview rate."""
+        fps_interval = 1.0 / self._preview_fps()
         if self._is_monitor_input(key):
-            return self.SNAP_MIN_MONITOR_INTERVAL
+            return max(self.SNAP_MIN_MONITOR_INTERVAL, fps_interval)
         if self._is_live_source(key):
-            return self.SNAP_MIN_LIVE_INTERVAL
+            # Moving inputs get a deliberate, capped cadence. The global trigger
+            # pacing distributes captures fairly across a camera / NDI wall.
+            return max(self.SNAP_MIN_LIVE_INTERVAL, fps_interval * 2)
         return self.SNAP_MIN_STATIC_INTERVAL
 
     def _is_monitor_input(self, key: str) -> bool:

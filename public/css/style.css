@@ -670,6 +670,48 @@ select,
   display: block;
 }
 
+/* LiveLAN true-motion video layer: fills the same 16:9 frame as the
+   snapshot <img>. vMix serves its own HLS player page, so no client
+   video library is needed and tablets stream straight from the vMix PC
+   (works even when this switcher runs on another machine). */
+.monitor-live-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #000;
+  display: block;
+}
+
+/* IMG / VIDEO source toggle: plain-text machined key, pushed right. Active
+   = solid fill so the mode reads at arm's length, never color-only. */
+.monitor-video-toggle {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  cursor: pointer;
+  min-height: 28px;
+}
+
+.monitor-video-toggle:hover {
+  color: var(--ink-1);
+  border-color: var(--line-3);
+}
+
+.monitor-video-toggle.active {
+  color: #000;
+  background: var(--next);
+  border-color: var(--next);
+}
+
 .monitor-overlay-info {
   position: absolute;
   inset: auto 0 0 0;
@@ -1567,6 +1609,38 @@ select,
   flex-direction: column;
 }
 
+.multiview-live-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 8px;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-1);
+}
+
+.multiview-live-status .live-signal-dot {
+  background: var(--ink-3);
+  box-shadow: none;
+  animation: none;
+}
+
+.multiview-live-status.is-live {
+  color: var(--next-ink);
+  border-color: color-mix(in oklab, var(--next) 55%, var(--line-1));
+}
+
+.multiview-live-status.is-live .live-signal-dot {
+  background: var(--next);
+  box-shadow: none;
+  animation: liveSignalGlow 2.2s infinite ease-in-out;
+}
+
 .mv-card-label {
   font-size: 0.62rem;
   font-weight: 800;
@@ -1864,7 +1938,14 @@ select,
   display: block;
   background: rgba(16, 185, 129, 0.25);
   border: 1px solid rgba(16, 185, 129, 0.5);
-  color: #34d399;
+  color: #d4ffe9;
+}
+
+.mv-cam-status-pill.feed-standby {
+  display: block;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid var(--line-2);
+  color: var(--ink-2);
 }
 
 .mv-cam-take-action {

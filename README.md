@@ -7,6 +7,7 @@ A modern, high-contrast, responsive web switcher for **vMix live video productio
 - 🔴 **Interactive Broadcast Controls**: Clickable **REC** (with live timer), **STREAM**, **EXT** (External output), and **FULLSCREEN**
 - 🎤 **Dedicated Mic & Audio Console**: Tactical Mute/Live toggles, volume fader sliders (0-100%), and animated VU peak meters
 - 🖥️ **Big Screen Preview (Multiviewer)**: Fullscreen-ready production multiviewer with giant twin 16:9 displays, live clock, and multi-camera grid
+- 🎥 **True-motion Program video (LiveLAN)**: Flip Program monitors from snapshots to real motion video streamed straight from the vMix PC (IMG ⇄ VIDEO toggle, ~10s delay, tally stays instant)
 - 👁️ Hide auxiliary inputs (audio, overlays, test patterns) without touching vMix
 - 📱 Touch-optimized with haptics + click sounds, ⌨️ shortcuts (`1`–`9`, `Space`, `Enter`)
 - 🔄 Real-time sync across all crew devices via WebSocket
@@ -133,7 +134,13 @@ The switcher features 3 dedicated operational modes accessible via the top tab b
 - **Change transition:** dropdown at top center (`Fade`, `Cut`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Transition 1/2` + duration).
 - **Preview + Take mode:** Settings ⚙️ → *Switcher Action* → stage in Preview, then **CUT** / **AUTO**.
 - **Hide sources:** *Manage Sources* → toggle off *Display on Switcher* (e.g. audio, color bars). Optional **Display Nickname** per input.
-- **Settings ⚙️:** switcher mode, default transition + duration, vMix host/port, password, poll interval, **Live Preview Refresh Rate** (1–10 fps), **Offline Simulator Mode** (rehearse without vMix).
+- **Settings ⚙️:** switcher mode, default transition + duration, vMix host/port, password, poll interval, **Live Preview Refresh Rate** (1–10 fps), **LiveLAN Video URL** (true motion on Program monitors, blank = auto), **Offline Simulator Mode** (rehearse without vMix).
+
+### 🎥 True-motion Program video (LiveLAN)
+Snapshots are great for the grid, but motion needs video. vMix's built-in **LiveLAN** streams Program to any browser on the LAN:
+1. In vMix: Stream settings (cog next to Stream) → Destination **LiveLAN** → pick quality → **Start** → **View Stream** (note the URL, e.g. `http://192.168.1.50:8088/livelan`).
+2. In this app: tap **IMG** on the Program monitor (or corner hero) → it flips to **VIDEO**. Leave *LiveLAN Video URL* blank to auto-derive it per device, or paste the View Stream URL in Settings ⚙️ to pin it for the whole crew.
+3. Notes: ~10s behind live (tally lights stay instant — trust the red/green, not the video frame); tablets load it straight from the vMix PC so it works even when the switcher runs elsewhere; needs port `8088` reachable (same firewall note as below).
 
 ---
 
@@ -151,6 +158,7 @@ Settings persist in `config.json`:
 | `defaultTransition` / `transitionDuration` | `Fade` / `500` | Transition + ms |
 | `switcherMode` | `direct` | `direct` or `preview_take` |
 | `previewFps` | `4` | Live preview snapshot refresh rate (0.5–10 fps). Higher = smoother previews, more load on the vMix PC |
+| `livelanUrl` | `""` (auto) | Explicit LiveLAN page URL for true-motion Program video. Blank = auto-derive per device from page host + `vmixPort` |
 | `mockMode` | `false` | Simulator when vMix is offline |
 
 ---
@@ -192,6 +200,7 @@ Then check the **Actions** tab → **Build Release Binaries** → once green, th
 | SmartScreen warning (Windows exe) | *More info → Run anyway*. Expected for unsigned self-builds. |
 | Want a fresh password/secret | Settings ⚙️ → change password (min 3 chars). |
 | vMix pops up "A generic error occurred in GDI+" | Update to v1.3.3+: snapshots are one-at-a-time with auto-pause on errors. Immediate relief: Settings → uncheck *Show Live Video Thumbnails* (stops all snapshot requests). |
+| VIDEO monitor is black / won't load | LiveLAN not started in vMix (Stream cog → LiveLAN → Start)? Tablet on same LAN? Port `8088` allowed through the vMix PC firewall? Try opening the LiveLAN URL directly in the tablet browser — if that fails, the app can't embed it either. |
 
 ---
 

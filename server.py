@@ -150,6 +150,7 @@ class ConfigUpdateRequest(BaseModel):
     switcherMode: Optional[str] = None
     pollIntervalMs: Optional[int] = None
     previewFps: Optional[float] = None
+    livelanUrl: Optional[str] = None
     mockMode: Optional[bool] = None
     newPassword: Optional[str] = None
 
@@ -313,6 +314,8 @@ async def update_config(req: ConfigUpdateRequest, _: bool = Depends(require_auth
         updates["pollIntervalMs"] = int(req.pollIntervalMs)
     if req.previewFps is not None:
         updates["previewFps"] = min(10.0, max(0.5, float(req.previewFps)))
+    if req.livelanUrl is not None:
+        updates["livelanUrl"] = req.livelanUrl.strip()
     if req.mockMode is not None:
         updates["mockMode"] = bool(req.mockMode)
     if req.newPassword and len(req.newPassword.strip()) >= 3:

@@ -23,6 +23,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "inputColors": {},
     "pollIntervalMs": 300,
     "previewFps": 4,           # Live preview snapshot refresh rate (0.5 - 10)
+    "livelanUrl": "",          # Optional explicit LiveLAN video URL (http://vMix-IP:8088/livelan).
+                               # Empty = auto-derive per device from the page host + vmixPort.
     "mockMode": False,
     "authTokenSecret": secrets.token_hex(24)
 }

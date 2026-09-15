@@ -135,9 +135,11 @@
           <div class="tally-tag">
             <span class="live-dot-pulse"></span>
             <span>PROGRAM / LIVE (MAIN OUTPUT)</span>
+            <button type="button" id="pgm-video-toggle" class="monitor-video-toggle" title="Toggle true motion video (LiveLAN, ~10s delay) vs snapshots">IMG</button>
           </div>
           <div class="monitor-screen-wrapper">
             <img id="pgm-monitor-img" class="monitor-screen-img" alt="Live Program Screen" />
+            <iframe id="pgm-live-frame" class="monitor-live-frame hidden" title="Live program video (LiveLAN)" allow="autoplay; fullscreen" allowfullscreen></iframe>
             <div class="monitor-overlay-info">
               <span class="tally-num" id="pgm-number">--</span>
               <span class="tally-name" id="pgm-name">No Active Input</span>
@@ -259,13 +261,17 @@
       <div class="multiview-header">
         <div class="multiview-title-group">
           <h3>Preview Mode</h3>
-          <p class="multiview-subtitle">Snapshots pulled from vMix every few seconds • The big corner monitor shows what is currently live on air</p>
+          <p class="multiview-subtitle">Live camera and NDI inputs refresh continuously. The corner monitor is the current program output.</p>
         </div>
 
         <div class="multiview-controls-group">
           <div class="multiview-clock-card">
             <span class="mv-card-label">PRODUCTION CLOCK</span>
             <span id="multiview-clock" class="mv-card-val">00:00:00</span>
+          </div>
+          <div id="multiview-live-status" class="multiview-live-status" role="status">
+            <span class="live-signal-dot"></span>
+            <span>WAITING FOR LIVE SOURCES</span>
           </div>
 
           <div class="corner-position-pills">
@@ -295,10 +301,12 @@
                 <span class="corner-hero-tag">LIVE ON AIR (CURRENT OUTPUT)</span>
               </div>
               <span class="corner-hero-pill">ON AIR</span>
+              <button type="button" id="mv-video-toggle" class="monitor-video-toggle" title="Toggle true motion video (LiveLAN, ~10s delay) vs snapshots">IMG</button>
               <span class="thumb-mode-pill is-waiting" id="mv-thumb-mode" title="">IMG:LOAD</span>
             </div>
             <div class="corner-hero-canvas">
               <img id="mv-pgm-img" class="corner-hero-img" alt="Currently Live Program" />
+              <iframe id="mv-live-frame" class="monitor-live-frame hidden" title="Live program video (LiveLAN)" allow="autoplay; fullscreen" allowfullscreen></iframe>
               <div class="corner-hero-footer">
                 <div class="corner-hero-meta">
                   <span id="mv-pgm-num" class="corner-hero-num">--</span>
@@ -453,6 +461,12 @@
                 <option value="10">10 fps (turbo - needs vMix on the same PC)</option>
               </select>
               <small class="field-hint">How often preview images are re-captured from vMix. Higher rates mean more load on the vMix machine.</small>
+            </div>
+
+            <div class="form-group form-group-spaced">
+              <label for="setting-livelan-url">LiveLAN Video URL (true motion on Program monitors)</label>
+              <input type="text" id="setting-livelan-url" placeholder="Auto: http://this-device-host:8088/livelan">
+              <small class="field-hint">Enable in vMix: Stream settings (cog) → Destination <strong>LiveLAN</strong> → Start → View Stream. Leave blank to auto-derive from this device's address. Tablets load it straight from the vMix PC, so it works even when the switcher runs elsewhere. Expect ~10s delay — tally lights stay instant.</small>
             </div>
           </div>
 
