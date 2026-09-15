@@ -18,9 +18,11 @@ class VMixClient:
         "camera", "ndi", "desktopcapture", "video", "videolist",
         "vmixcall", "stream", "replay", "source"
     }
-    SNAP_MIN_ANY_INTERVAL = 0.18      # global pacing, lets the wall cycle through live inputs quickly
-    SNAP_MIN_MONITOR_INTERVAL = 0.25  # active / preview inputs, kept at the configured preview cadence
-    SNAP_MIN_LIVE_INTERVAL = 0.75     # Camera / NDI feeds, enough motion without overwhelming vMix
+    SNAP_MIN_ANY_INTERVAL = 0.5       # global pacing: each trigger holds the lock for the
+                                      # full vMix render, so pacing faster than a render
+                                      # only piles up timeouts / GDI contention
+    SNAP_MIN_MONITOR_INTERVAL = 0.8   # active / preview inputs, kept near the preview cadence
+    SNAP_MIN_LIVE_INTERVAL = 2.0      # Camera / NDI feeds, enough motion without overwhelming vMix
     SNAP_MIN_STATIC_INTERVAL = 45.0   # static stills (titles, image, colour, audio)
     SNAP_MAX_FILE_AGE = 60.0          # serve files up to this old while revalidating
     SNAP_SUCCESS_FRESH = 20.0         # file newer than this counts as "live"
@@ -43,6 +45,7 @@ class VMixClient:
         self._snap_last_any: float = 0.0
         self._snap_lock = asyncio.Lock()
         self._snap_pending_keys: set[str] = set()  # never queue duplicate captures for one source
+        self._snap_backoff: dict[str, tuple[int, float]] = {}  # key -> (fail streak, next allowed epoch)
         self._snap_fail_streak: int = 0
         self._snap_paused_until: float = 0.0
         self._snap_last_success: float = 0.0
@@ -230,7 +233,8 @@ class VMixClient:
                 **inp,
                 "customTitle": custom_title,
                 "customColor": custom_color,
-                "isIgnored": is_ignored
+                "isIgnored": is_ignored,
+                "snapAgeSec": self._snap_age_for_key(str(inp.get("key") or inp.get("number"))),
             })
 
         visible_inputs = [i for i in all_inputs if not i["isIgnored"]]
@@ -466,9 +470,11 @@ class VMixClient:
             self._snap_last_success = max(self._snap_last_success, mtime)
 
         paused = now < self._snap_paused_until
+        backed_off_until = self._snap_backoff.get(key, (0, 0.0))[1]
+        backed_off = now < backed_off_until
         interval = self._get_input_interval(key)
         due = (mtime <= 0) or ((now - mtime) > interval)
-        if due and not paused and key not in self._snap_pending_keys and (now - self._snap_last_any) >= self.SNAP_MIN_ANY_INTERVAL:
+        if due and not paused and not backed_off and key not in self._snap_pending_keys and (now - self._snap_last_any) >= self.SNAP_MIN_ANY_INTERVAL:
             self._snap_last_any = now
             self._snap_pending_keys.add(key)
             asyncio.create_task(self._trigger_snapshot_guarded(key, path))
@@ -520,6 +526,11 @@ class VMixClient:
 
             # Once the API returns, vMix has finished writing and closed the file.
             # Read and cache the raw JPEG in memory, and atomically replace target path.
+            # NOTE: vMix answers HTTP 200 even when the render silently fails, so a
+            # missing file is a failure too — otherwise inputs stall at IMG:LOAD
+            # forever with zero signal (no file, no error, no backoff).
+            if not os.path.isfile(temp_path):
+                await self._await_snapshot_file(temp_path)
             if os.path.isfile(temp_path):
                 try:
                     with open(temp_path, "rb") as fh:
@@ -537,23 +548,60 @@ class VMixClient:
                             os.remove(temp_path)
                         except OSError:
                             pass
+            else:
+                raise RuntimeError(f"vMix accepted SnapshotInput for {key!r} but wrote no file")
         except Exception as err:
-            self._record_snap_failure(f"Snapshot failed: {err}")
+            self._record_snap_failure(key, f"Snapshot failed: {err}")
         else:
-            self._record_snap_success()
+            self._record_snap_success(key)
         finally:
             self._snap_pending_keys.discard(key)
 
-    def _record_snap_success(self) -> None:
-        self._snap_fail_streak = 0
+    @staticmethod
+    async def _await_snapshot_file(temp_path: str, timeout: float = 6.0) -> None:
+        """vMix sometimes renders asynchronously after the API returns. Give
+        the file a short grace window before calling it a silent failure."""
+        import os
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if os.path.isfile(temp_path):
+                return
+            await asyncio.sleep(0.25)
 
-    def _record_snap_failure(self, detail: str) -> None:
+    def _record_snap_success(self, key: str = "") -> None:
+        self._snap_fail_streak = 0
+        if key:
+            self._snap_backoff.pop(str(key), None)
+
+    def _record_snap_failure(self, key: str, detail: str) -> None:
         self._snap_fail_streak += 1
+        # Per-input backoff: a failing input must not hammer vMix (and starve
+        # the inputs that do work). 3s, 6s, 12s… capped at 60s.
+        streak, _ = self._snap_backoff.get(str(key), (0, 0.0))
+        streak += 1
+        wait = min(60.0, 3.0 * (2 ** (streak - 1)))
+        self._snap_backoff[str(key)] = (streak, time.time() + wait)
+        if streak == 2:
+            # Visible in the server console window so a stuck input is obvious
+            # without opening devtools: which input, and why.
+            print(f"[snap] input {key} failing ({detail}) — backing off, retrying quietly")
         if self._snap_fail_streak >= self.SNAP_BREAKER_TRIPS:
             self._snap_paused_until = time.time() + self.SNAP_BREAKER_PAUSE
             self._set_thumb_status("paused", "Snapshots paused 30s — vMix reported save errors")
         else:
             self._set_thumb_status("starting", detail)
+
+    def _snap_age_for_key(self, key: str) -> Optional[int]:
+        """Age of the last snapshot file for an input, or None if none yet.
+        Lets the UI tell 'waiting for first snap' apart from 'stuck'."""
+        import os
+        try:
+            if not self._snap_dir:
+                return None
+            path = os.path.join(self._snap_dir, self._snap_filename(key))
+            return int(time.time() - os.path.getmtime(path))
+        except OSError:
+            return None
 
     def _get_input_data(self, target_id: Any) -> Optional[Dict[str, Any]]:
         tid = str(target_id)
