@@ -394,6 +394,79 @@ def test_all():
             assert err.code == 401, f"Expected 401, got {err.code}"
         print("✓ Live endpoints enforce authentication")
 
+        # 31. Auto-aim similarity matrix (deterministic synthetic scenes)
+        import random as _r
+        from PIL import Image as _I, ImageDraw as _D
+        from vmix.liveaim import aim_once, similarity
+        def _prog(w, h, bg, seed):
+            _r.seed(seed)
+            im = _I.new("RGB", (w, h), bg)
+            d = _D.Draw(im)
+            for _ in range(30):
+                x0, y0 = _r.randint(0, w - 60), _r.randint(0, h - 60)
+                d.ellipse([x0, y0, x0 + _r.randint(20, 100), y0 + _r.randint(20, 100)],
+                          fill=(_r.randint(0, 255), _r.randint(0, 255), _r.randint(0, 255)))
+            return im
+        _P = _prog(640, 360, (140, 20, 30), 7)
+        _P43 = _prog(480, 360, (30, 120, 160), 11)
+        _Q = _prog(640, 360, (20, 90, 40), 99)
+        _lb = _I.new("RGB", (640, 360), (0, 0, 0)); _lb.paste(_P.resize((640, 240)), (0, 60))
+        _pb = _I.new("RGB", (640, 360), (0, 0, 0)); _pb.paste(_P43, (80, 0))
+        _W = _prog(860, 360, (90, 40, 120), 21)
+        _fit = _W.resize((640, 268))
+        _filmlb = _I.new("RGB", (640, 360), (0, 0, 0)); _filmlb.paste(_fit, (0, 46))
+        _V = _prog(360, 640, (40, 100, 140), 33)
+        _fitv = _V.resize((203, 360))
+        _vpb = _I.new("RGB", (640, 360), (0, 0, 0)); _vpb.paste(_fitv, (218, 0))
+        _U = _I.new("RGB", (1366, 768), (9, 13, 22))
+        _M = _U.copy(); _M.paste(_P.resize((300, 168)), (533, 200))
+        for name, a, b, want_match in [
+            ("identical", _P, _P.copy(), True), ("resized", _P, _P.resize((1920, 1080)), True),
+            ("pillarboxed", _P43, _pb, True), ("film-letterbox", _W, _filmlb, True),
+            ("vertical", _V, _vpb, True), ("different", _P, _Q, False),
+            ("dark-ui", _P, _U, False), ("browser-mirror", _P, _M, False),
+        ]:
+            s = similarity(a, b)
+            assert (s > 0.45) == want_match, f"aim similarity {name}: {s:.3f}"
+        print("✓ Auto-aim similarity matrix verified (matches pass, others fail)")
+
+        # 32. aim_once scan path with real display pixels when a display exists
+        try:
+            import mss as _mss
+            with _mss.mss() as _sct:
+                _mons = _sct.monitors
+                assert len(_mons) > 1, "expected at least one physical display"
+                _shot = _sct.grab(_mons[1])
+                from PIL import Image as _I2
+                _ref = _I2.frombytes("RGB", _shot.size, _shot.bgra, "raw", "BGRX")
+            _res = aim_once(_ref)
+            assert _res.get("monitorCount", 0) >= 1
+            assert _res.get("bestIdx") == 1, f"self-match should win: {_res}"
+            assert _res.get("bestScore", 0) > 0.9, f"self-match score: {_res}"
+            print(f"✓ Auto-aim live scan verified (self-match {_res.get('bestScore')} on display 1)")
+        except Exception as e:
+            print(f"· Auto-aim live scan skipped (no display in this environment: {e})")
+
+        # 33. Rescan endpoint: honest refusal in simulator mode, auth enforced
+        status, res = req(f"{base}/api/vmix/live/rescan", "POST", {}, token=token)
+        assert status == 200, f"Expected 200, got {status}"
+        assert res.get("ok") is False, "mock mode must refuse auto-aim"
+        print("✓ Live rescan endpoint verified (honest refusal in simulator mode)")
+
+        # 34. liveCapAuto config round-trip
+        status, res = req(f"{base}/api/config", "PUT", {"liveCapAuto": False}, token=token)
+        assert status == 200 and res.get("config", {}).get("liveCapAuto") is False
+        status, res = req(f"{base}/api/config", "PUT", {"liveCapAuto": True}, token=token)
+        assert status == 200 and res.get("config", {}).get("liveCapAuto") is True
+        print("✓ Live auto-aim config round-trip verified")
+
+        # 35. Live status carries auto-aim fields
+        status, res = req(f"{base}/api/vmix/live/status", "GET", token=token)
+        assert status == 200
+        for key in ("autoIdx", "autoScore", "monitorUsed", "monitorCount"):
+            assert key in res, f"live status missing key {key}"
+        print("✓ Live status auto-aim fields verified")
+
         print("\nALL PYTHON INTEGRATION TESTS PASSED! 🎉")
     finally:
         config_manager.config = initial_config

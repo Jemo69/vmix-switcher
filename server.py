@@ -169,6 +169,7 @@ class ConfigUpdateRequest(BaseModel):
     maxPriorityInputs: Optional[int] = None
     livelanUrl: Optional[str] = None
     liveCapEnabled: Optional[bool] = None
+    liveCapAuto: Optional[bool] = None
     liveCapMonitor: Optional[int] = None
     liveCapFps: Optional[int] = None
     liveCapWidth: Optional[int] = None
@@ -330,6 +331,11 @@ async def live_program_jpg(_: bool = Depends(require_auth)):
         media_type="image/jpeg",
         headers={"Cache-Control": "no-store"},
     )
+
+@app.post("/api/vmix/live/rescan")
+async def live_program_rescan(_: bool = Depends(require_auth)):
+    """Re-aim LIVE at the Program display right now (Settings button)."""
+    return await vmix_client.livecap_rescan()
 
 @app.get("/api/vmix/live/program.mjpg")
 async def live_program_mjpg(_: bool = Depends(require_auth)):
@@ -495,6 +501,10 @@ async def update_config(req: ConfigUpdateRequest, _: bool = Depends(require_auth
         updates["livelanUrl"] = req.livelanUrl.strip()
     if req.liveCapEnabled is not None:
         updates["liveCapEnabled"] = bool(req.liveCapEnabled)
+    if req.liveCapAuto is not None:
+        updates["liveCapAuto"] = bool(req.liveCapAuto)
+        if bool(req.liveCapAuto):
+            live_capture.clear_auto()  # force a fresh aim on next poll
     if req.liveCapMonitor is not None:
         updates["liveCapMonitor"] = clamp_monitor(req.liveCapMonitor)
     if req.liveCapFps is not None:

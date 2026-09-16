@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from typing import Any, Callable, Dict, List, Optional
 
 from .config import config_manager
+from .liveaim import aim_once
 from .livecap import clamp_fps, live_capture
 from .mock import mock_vmix
 
@@ -64,6 +65,9 @@ class VMixClient:
         self._snap_last_success: float = 0.0
         self._thumb_mode: str = "starting"  # live|starting|paused|remote|offline|mock
         self._thumb_detail: str = ""
+        self._livecap_last_aim: float = 0.0
+        self._livecap_aim_active: Any = None
+        self._livecap_aim_result: Dict[str, Any] = {}
 
     def add_callback(self, cb: Callable[[Dict[str, Any]], Any]) -> None:
         if cb not in self.callbacks:
@@ -103,6 +107,7 @@ class VMixClient:
             state = mock_vmix.get_state()
             self.connected = True
             self.last_error = None
+            live_capture.clear_auto()
             return self._process_state(state, is_mock=True)
 
         host = cfg.get("vmixHost", "127.0.0.1")
@@ -114,7 +119,9 @@ class VMixClient:
             state = self._parse_xml(raw_xml)
             self.connected = True
             self.last_error = None
-            return self._process_state(state, is_mock=False)
+            full_state = self._process_state(state, is_mock=False)
+            await self._livecap_maybe_aim(full_state)
+            return full_state
         except Exception as err:
             self.connected = False
             self.last_error = str(err)
@@ -351,6 +358,71 @@ class VMixClient:
             return {"available": True, "fps": fps, "error": None}
         return {"available": False, "fps": fps,
                 "error": st.get("error") or "capture failed"}
+
+    async def _livecap_maybe_aim(self, full_state: Dict[str, Any]) -> None:
+        """Re-aim LIVE at the Program display: every 30s, or 5s after a switch."""
+        try:
+            cfg = config_manager.get()
+            if (cfg.get("mockMode", False) or not cfg.get("liveCapEnabled", True)
+                    or not cfg.get("liveCapAuto", True)):
+                return
+            now = time.time()
+            active_now = full_state.get("active")
+            switched = active_now != self._livecap_aim_active
+            if (now - self._livecap_last_aim) > 30.0 or (switched and (now - self._livecap_last_aim) > 5.0):
+                await self._livecap_auto_aim(force=False)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _decode_ref(data: bytes):
+        import io as _io
+        from PIL import Image as _Image
+        return _Image.open(_io.BytesIO(data)).convert("RGB")
+
+    async def _livecap_auto_aim(self, force: bool = False) -> Dict[str, Any]:
+        """Score every display against the Program picture; point LIVE at the winner."""
+        cfg = config_manager.get()
+        if cfg.get("mockMode", False) or not self._is_vmix_local():
+            live_capture.clear_auto()
+            return {"ok": False, "error": "needs the server on the vMix PC"}
+        if not cfg.get("liveCapEnabled", True):
+            live_capture.clear_auto()
+            return {"ok": False, "error": "disabled in settings"}
+        if not force and not cfg.get("liveCapAuto", True):
+            return {"ok": False, "error": "auto-aim off"}
+        try:
+            data, mime = await self.get_thumbnail("active")
+        except Exception as err:
+            return {"ok": False, "error": f"no program picture to aim with: {err}"}
+        if not data or (mime or "").startswith("image/svg"):
+            return {"ok": False, "error": "program snapshot not ready yet"}
+        try:
+            ref = await asyncio.to_thread(self._decode_ref, data)
+            result = await asyncio.to_thread(aim_once, ref)
+        except Exception as err:
+            return {"ok": False, "error": f"aim scan failed: {err}"}
+        self._livecap_last_aim = time.time()
+        try:
+            self._livecap_aim_active = self.last_state.get("active") if self.last_state else None
+        except Exception:
+            pass
+        self._livecap_aim_result = result
+        best = result.get("bestIdx")
+        if best is None:
+            live_capture.clear_auto()
+            return {"ok": False, "error": "no display matches Program — enable vMix fullscreen Program output",
+                    "monitorCount": result.get("monitorCount", 0),
+                    "scores": result.get("scores", [])}
+        live_capture.set_auto(int(best), float(result.get("bestScore") or 0.0))
+        return {"ok": True, "bestIdx": int(best), "bestScore": result.get("bestScore"),
+                "monitorCount": result.get("monitorCount", 0),
+                "scores": result.get("scores", [])}
+
+    async def livecap_rescan(self) -> Dict[str, Any]:
+        """Manual rescan (Settings button): aim now regardless of cadence."""
+        self._last_signature = None  # state (incl. capture) rebroadcasts fresh
+        return await self._livecap_auto_aim(force=True)
 
     def _notify(self, state: Dict[str, Any]) -> None:
         for cb in list(self.callbacks):

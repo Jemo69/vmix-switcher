@@ -529,11 +529,6 @@
                 </div>
                 <div class="form-row">
                   <div class="form-group col-half">
-                    <label for="setting-livecap-monitor">Display to capture</label>
-                    <input type="number" id="setting-livecap-monitor" min="0" max="16" step="1" value="1">
-                    <small class="field-hint">0 = full desktop. Tip: send vMix Program to a 2nd monitor via Fullscreen output, then pick it here.</small>
-                  </div>
-                  <div class="form-group col-half">
                     <label for="setting-livecap-fps">Stream rate</label>
                     <select id="setting-livecap-fps">
                       <option value="10">10 fps (light)</option>
@@ -542,6 +537,13 @@
                       <option value="30">30 fps (max)</option>
                     </select>
                   </div>
+                  <div class="form-group col-half">
+                    <label>Aiming</label>
+                    <div class="toolbar-actions">
+                      <button type="button" id="setting-livecap-rescan-btn" class="btn btn-secondary btn-sm">Find Program display</button>
+                    </div>
+                    <small class="field-hint">Auto-aim watches every display and locks onto Program by itself — no numbers to guess.</small>
+                  </div>
                 </div>
                 <div class="form-group">
                   <label>Capture aim check <span id="setting-livecap-monitors" class="filter-indicator"></span></label>
@@ -549,7 +551,7 @@
                   <div class="toolbar-actions">
                     <button type="button" id="setting-livecap-refresh-btn" class="btn btn-secondary btn-sm">Refresh aim check</button>
                   </div>
-                  <small class="field-hint">If you see this settings page mirrored back, the capture is pointed at the browser — pick the display carrying vMix Program instead.</small>
+                  <small class="field-hint">If this preview shows the browser mirrored back, click <strong>Find Program display</strong> above — or enable vMix fullscreen Program output on a second display.</small>
                 </div>
                 <small class="field-hint">Tap the <strong>IMG</strong> button on the Program monitor to cycle IMG → LIVE → VIDEO. LIVE is current to a fraction of a second; VIDEO (LiveLAN) is smooth but ~10s behind.</small>
               </div>

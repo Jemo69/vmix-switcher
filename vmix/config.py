@@ -34,7 +34,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Low-latency live Program capture (same binary, no external services).
     # Captures the vMix PC display: pair with vMix Fullscreen Program output.
     "liveCapEnabled": True,
-    "liveCapMonitor": 1,
+    "liveCapAuto": True,        # Auto-aim: find the Program display by matching pictures.
+    "liveCapMonitor": 1,        # Fallback display when auto-aim finds no match (0 = full desktop).
     "liveCapFps": 25,
     "liveCapWidth": 960,
     "liveCapQuality": 70,

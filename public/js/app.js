@@ -158,8 +158,8 @@ class SwitcherApp {
       manageClearPriorityBtn: document.getElementById('manage-clear-priority-btn'),
       settingLivelanUrl: document.getElementById('setting-livelan-url'),
       settingLivecapEnabled: document.getElementById('setting-livecap-enabled'),
-      settingLivecapMonitor: document.getElementById('setting-livecap-monitor'),
       settingLivecapFps: document.getElementById('setting-livecap-fps'),
+      settingLivecapRescanBtn: document.getElementById('setting-livecap-rescan-btn'),
       settingLivecapPreview: document.getElementById('setting-livecap-preview'),
       settingLivecapMonitors: document.getElementById('setting-livecap-monitors'),
       settingLivecapRefreshBtn: document.getElementById('setting-livecap-refresh-btn'),
@@ -448,6 +448,9 @@ class SwitcherApp {
     }
     if (this.dom.settingLivecapRefreshBtn) {
       this.dom.settingLivecapRefreshBtn.addEventListener('click', () => this.loadLivecapPreview());
+    }
+    if (this.dom.settingLivecapRescanBtn) {
+      this.dom.settingLivecapRescanBtn.addEventListener('click', () => this.rescanLiveProgram());
     }
 
     // Settings Modal
@@ -2158,9 +2161,6 @@ class SwitcherApp {
       if (this.dom.settingLivecapEnabled) {
         this.dom.settingLivecapEnabled.checked = cfg.liveCapEnabled !== false;
       }
-      if (this.dom.settingLivecapMonitor) {
-        this.dom.settingLivecapMonitor.value = String(cfg.liveCapMonitor ?? 1);
-      }
       if (this.dom.settingLivecapFps) {
         this.dom.settingLivecapFps.value = String(cfg.liveCapFps || 25);
       }
@@ -2190,11 +2190,34 @@ class SwitcherApp {
       if (this.dom.settingLivecapMonitors && st) {
         const n = st.monitorCount ?? '?';
         const fps = st.fpsActual || st.fpsTarget || '?';
-        const err = (!st.available && st.error) ? ` — ${st.error}` : '';
+        let aim;
+        if (st.autoIdx !== null && st.autoIdx !== undefined && (st.autoFreshSec || 0) > 0) {
+          aim = `Program found on display ${st.autoIdx} (${st.autoScore})`;
+        } else if (!st.available) {
+          aim = st.error || 'capture unavailable';
+        } else {
+          aim = 'no display matches Program yet — enable vMix fullscreen output';
+        }
         this.dom.settingLivecapMonitors.textContent =
-          `${n} display(s) detected • ${fps} fps${err}`;
+          `${n} display(s) • showing display ${st.monitorUsed ?? '?'} • ${aim} • ${fps} fps`;
       }
     } catch {}
+  }
+
+  async rescanLiveProgram() {
+    this.vibrate();
+    this.showToast('Scanning displays for Program…', 2000);
+    try {
+      const res = await API.rescanLive();
+      if (res && res.ok) {
+        this.showToast(`Locked onto display ${res.bestIdx} (match ${res.bestScore})`, 3000);
+      } else {
+        this.showToast((res && res.error) || 'No Program display found', 4000);
+      }
+    } catch (err) {
+      this.showToast(err.message || 'Rescan failed', 3500);
+    }
+    this.loadLivecapPreview();
   }
 
   async loadNetworkIps() {
@@ -2257,9 +2280,6 @@ class SwitcherApp {
 
     if (this.dom.settingLivecapEnabled) {
       updates.liveCapEnabled = this.dom.settingLivecapEnabled.checked;
-    }
-    if (this.dom.settingLivecapMonitor) {
-      updates.liveCapMonitor = parseInt(this.dom.settingLivecapMonitor.value, 10);
     }
     if (this.dom.settingLivecapFps) {
       updates.liveCapFps = parseInt(this.dom.settingLivecapFps.value, 10);

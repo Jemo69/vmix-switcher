@@ -16,6 +16,7 @@
   "maxPriorityInputs": 20,
   "livelanUrl": "",
   "liveCapEnabled": true,
+  "liveCapAuto": true,
   "liveCapMonitor": 1,
   "liveCapFps": 25,
   "liveCapWidth": 960,

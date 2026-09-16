@@ -35,6 +35,8 @@ import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
+from .liveaim import AUTO_FRESH_SEC
+
 # Target bounds (also enforced on the /api/config lane).
 MIN_FPS = 5
 MAX_FPS = 30
@@ -102,6 +104,10 @@ class LiveCapture:
         self._target_monitor = 1
         self._target_width = 960
         self._target_quality = 70
+        # Auto-aim pick (written by set_auto(), wins while fresh).
+        self._auto_idx: Optional[int] = None
+        self._auto_score: float = 0.0
+        self._auto_time: float = 0.0
         self._placeholder_cache: Dict[str, bytes] = {}
 
     # -- control ----------------------------------------------------
@@ -140,6 +146,32 @@ class LiveCapture:
         t = self._thread
         return bool(t is not None and t.is_alive())
 
+    def set_auto(self, idx: Optional[int], score: float = 0.0) -> None:
+        """Auto-aim pick: wins over the configured monitor while fresh."""
+        with self._lock:
+            self._auto_idx = idx
+            self._auto_score = float(score or 0.0)
+            self._auto_time = time.time()
+
+    def clear_auto(self) -> None:
+        with self._lock:
+            self._auto_idx = None
+            self._auto_score = 0.0
+            self._auto_time = 0.0
+
+    def _auto_pick(self, monitor_total: int) -> Optional[int]:
+        with self._lock:
+            if self._auto_idx is None:
+                return None
+            if (time.time() - self._auto_time) > AUTO_FRESH_SEC:
+                return None
+            idx = self._auto_idx
+        if monitor_total <= 0:
+            return None
+        if idx <= 0:
+            return 0
+        return min(idx, monitor_total)
+
     # -- readers ----------------------------------------------------
     def latest(self) -> Tuple[Optional[bytes], float]:
         with self._lock:
@@ -175,6 +207,10 @@ class LiveCapture:
                 "frameAgeSec": round(age, 2) if age is not None else None,
                 "frameBytes": len(self._frame) if self._frame else 0,
                 "error": self._error,
+                "autoIdx": self._auto_idx,
+                "autoScore": round(self._auto_score, 3),
+                "autoFreshSec": round(max(0.0, AUTO_FRESH_SEC - (time.time() - self._auto_time)), 1)
+                if self._auto_idx is not None else 0.0,
             }
 
     def placeholder(self, reason: str) -> bytes:
@@ -244,8 +280,12 @@ class LiveCapture:
                     quality = self._target_quality
                     interval = 1.0 / max(1, fps)
 
-                    # Resolve monitor: 0 = full virtual desktop, else clamp.
-                    if want_mon <= 0 or len(monitors) <= 1:
+                    # Resolve monitor: auto-aim pick wins while fresh, else the
+                    # configured fallback. 0 = full virtual desktop.
+                    auto_idx = self._auto_pick(len(monitors) - 1)
+                    if auto_idx is not None:
+                        idx = auto_idx
+                    elif want_mon <= 0 or len(monitors) <= 1:
                         idx = 0 if len(monitors) > 0 else -1
                     else:
                         idx = min(want_mon, len(monitors) - 1)

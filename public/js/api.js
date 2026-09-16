@@ -197,6 +197,10 @@ const API = {
     return this.request('/api/vmix/live/status');
   },
 
+  async rescanLive() {
+    return this.request('/api/vmix/live/rescan', { method: 'POST' });
+  },
+
   // Configuration
   async getConfig() {
     return this.request('/api/config');

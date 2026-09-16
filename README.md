@@ -148,10 +148,10 @@ Snapshots are great for the grid, but motion needs video. vMix's built-in **Live
 3. Notes: ~10s behind live (tally lights stay instant — trust the red/green, not the video frame); tablets load it straight from the vMix PC so it works even when the switcher runs elsewhere; needs port `8088` reachable (same firewall note as below).
 
 ### ⚡ Live Program stream (LIVE — sub-second, same binary)
-The Program monitor button cycles three sources: **IMG** (snapshots: accurate but ~1 fresh frame/sec) → **LIVE** (real motion, sub-second delay) → **VIDEO** (LiveLAN: smooth but ~10s behind). LIVE is captured on the vMix PC by the app itself — no extra software or services:
+The Program monitor button cycles three sources: **IMG** (snapshots: accurate but ~1 fresh frame/sec) → **LIVE** (real motion, sub-second delay) → **VIDEO** (LiveLAN: smooth but ~10s behind). LIVE is captured on the vMix PC by the app itself — no extra software or services, and no display numbers to guess:
 1. Run this app **on the vMix PC** (LIVE is disabled with an honest reason anywhere else — a remote server will never show you its own desktop as your Program).
-2. Best picture: in vMix, Settings → Outputs → Fullscreen → send **Program** to a second monitor, then in Settings ⚙️ pick that display under *Display to capture*. Without a second monitor it captures the chosen display as-is.
-3. Tune *Stream rate* (10/15/25/30 fps) to your Wi-Fi. The pill reads `LIVE:25FPS` while running; if capture stops the monitor falls back to snapshots and says why.
+2. In vMix, Settings → Outputs → Fullscreen → send **Program** to a second monitor. The app watches every display, matches each one against the actual Program picture, and locks on by itself — re-aiming automatically after every switch. (First run can take ~30s to lock; Settings → *Find Program display* forces it now.)
+3. Keep the browser on the **main** monitor. Tune *Stream rate* (10/15/25/30 fps) to your Wi-Fi. The pill reads `LIVE:25FPS` while running; if capture stops the monitor falls back to snapshots and says why. Settings shows which display it locked (with the match score) plus an aim-check preview proving it.
 
 ---
 
@@ -174,7 +174,8 @@ Settings persist in `config.json`:
 | `maxPriorityInputs` | `20` | Cap for the priority list (1–50). Each venue sizes its fast tier in Settings ⚙️ |
 | `livelanUrl` | `""` (auto) | Explicit LiveLAN page URL for true-motion Program video. Blank = auto-derive per device from page host + `vmixPort` |
 | `liveCapEnabled` | `true` | Master switch for the LIVE low-latency Program stream (server must run on the vMix PC) |
-| `liveCapMonitor` | `1` | Display to capture: `1`–`N` physical display, `0` = full virtual desktop |
+| `liveCapAuto` | `true` | Auto-aim: find the Program display by matching pictures (no manual aiming) |
+| `liveCapMonitor` | `1` | Fallback display when auto-aim finds no match (`0` = full virtual desktop) |
 | `liveCapFps` | `25` | LIVE capture + stream rate (5–30 fps) |
 | `liveCapWidth` | `960` | LIVE output width in px, aspect kept (320–1920) |
 | `liveCapQuality` | `70` | LIVE JPEG quality (40–90) |
