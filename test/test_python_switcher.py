@@ -467,6 +467,71 @@ def test_all():
             assert key in res, f"live status missing key {key}"
         print("✓ Live status auto-aim fields verified")
 
+        # 36. Tile layout learning: synthetic multiviews assign correctly, desktops rejected
+        from vmix.livemulti import grid_cells, learn_layout, tile_state
+        def _scene(seed, bg):
+            _r.seed(seed)
+            im = _I.new("RGB", (640, 360), bg)
+            d = _D.Draw(im)
+            for _ in range(25):
+                x0, y0 = _r.randint(0, 560), _r.randint(0, 280)
+                d.ellipse([x0, y0, x0 + 70, y0 + 70],
+                          fill=(_r.randint(0, 255), _r.randint(0, 255), _r.randint(0, 255)))
+            return im
+        _scenes = [_scene(1, (150, 30, 30)), _scene(2, (30, 120, 60)),
+                   _scene(3, (30, 60, 150)), _scene(4, (120, 100, 20))]
+        _mv = _I.new("RGB", (1280, 720), (5, 5, 8))
+        for _s, (_x, _y) in zip(_scenes, [(10, 10), (650, 10), (10, 370), (650, 370)]):
+            _mv.paste(_s.resize((620, 340)), (_x, _y))
+        _lay = learn_layout(_mv, [(str(i + 1), _s) for i, _s in enumerate(_scenes)])
+        assert _lay and _lay["layout"] == "2x2", _lay
+        for _k, _rect in _lay["cells"].items():
+            _cx, _cy = _rect[0] + _rect[2] / 2, _rect[1] + _rect[3] / 2
+            assert int(_cy * 2) * 2 + int(_cx * 2) == int(_k) - 1, (_k, _rect)
+        assert learn_layout(_I.new("RGB", (1366, 768), (9, 13, 22)),
+                            [(str(i + 1), _s) for i, _s in enumerate(_scenes)]) is None
+        assert len(grid_cells(3, 3)) == 9
+        print("✓ Tile layout learning verified (2x2 assigns, desktop rejected)")
+
+        # 37. Tile crop serves valid JPEG for a learned cell, None otherwise
+        import io as _io
+        _frame_buf = _io.BytesIO()
+        _mv.save(_frame_buf, "JPEG", quality=80)
+        _frame_bytes = _frame_buf.getvalue()
+        tile_state.set(1, _lay)
+        from PIL import Image as _PI
+        _t = tile_state.crop(_frame_bytes, 1.0, "1", 384, 62)
+        assert _t and _t[:2] == b"\xff\xd8"
+        assert _PI.open(_io.BytesIO(_t)).size[0] <= 384
+        assert tile_state.crop(_frame_bytes, 1.0, "99", 384, 62) is None
+        assert tile_state.has("2") and not tile_state.has("9")
+        print("✓ Tile crop verified (valid JPEG for learned cell, None otherwise)")
+
+        # 38. Tile endpoints degrade honestly with no layout (mock mode)
+        tile_state.clear()
+        _tj = urllib.request.Request(f"{base}/api/vmix/live/input/1.jpg?token={token}")
+        with urllib.request.urlopen(_tj, timeout=5.0) as resp:
+            assert resp.status == 200
+            assert resp.read()[:2] == b"\xff\xd8"
+        _tm = urllib.request.Request(f"{base}/api/vmix/live/input/1.mjpg?token={token}")
+        with urllib.request.urlopen(_tm, timeout=5.0) as resp:
+            assert resp.status == 200
+            assert "multipart/x-mixed-replace" in resp.headers.get("Content-Type", "")
+            assert b"\xff\xd8" not in resp.read()
+        print("✓ Tile endpoints verified (placeholder still, clean stream end)")
+
+        # 39. State carries per-input liveTile flags + multiview summary
+        tile_state.set(1, _lay)
+        time.sleep(0.6)
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        assert status == 200
+        assert "liveMode" in res and "liveTiles" in res
+        _flags = {str(i["number"]): i.get("liveTile") for i in res["allInputs"]}
+        assert _flags.get("1") is True and _flags.get("2") is True, _flags
+        assert _flags.get("7") is False or "7" not in _flags, _flags
+        tile_state.clear()
+        print("✓ State live-tile flags verified")
+
         print("\nALL PYTHON INTEGRATION TESTS PASSED! 🎉")
     finally:
         config_manager.config = initial_config

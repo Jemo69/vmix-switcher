@@ -5,7 +5,7 @@ import os
 import socket
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +22,7 @@ from vmix.livecap import (
     clamp_width,
     live_capture,
 )
+from vmix.livemulti import MON_FPS, MON_Q, MON_W, TILE_FPS, TILE_Q, TILE_W, tile_state
 
 # Token Authentication
 def generate_token(password: str) -> str:
@@ -363,6 +364,73 @@ async def live_program_mjpg(_: bool = Depends(require_auth)):
             except (TypeError, ValueError):
                 fps = 25
             await asyncio.sleep(max(0.033, 1.0 / fps))
+
+    return StreamingResponse(
+        frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+    )
+
+def _tile_params(w: Any = None, fps: Any = None, q: Any = None) -> Tuple[int, float, int]:
+    try:
+        width = min(960, max(96, int(w or TILE_W)))
+    except (TypeError, ValueError):
+        width = TILE_W
+    try:
+        rate = min(25.0, max(2.0, float(fps or TILE_FPS)))
+    except (TypeError, ValueError):
+        rate = float(TILE_FPS)
+    try:
+        quality = min(90, max(40, int(q or TILE_Q)))
+    except (TypeError, ValueError):
+        quality = TILE_Q
+    return width, rate, quality
+
+# Per-input live tiles sliced from the MultiView capture. Only served for
+# inputs the layout learner assigned a cell; anything else gets the honest
+# placeholder (frontend falls back to snapshots via the liveTile flag).
+@app.get("/api/vmix/live/input/{input_key}.jpg")
+async def live_input_jpg(input_key: str, _: bool = Depends(require_auth),
+                         w: Any = None, q: Any = None):
+    width, _rate, quality = _tile_params(w, None, q)
+    frame, ts = live_capture.latest()
+    if frame and tile_state.has(input_key):
+        tile = await asyncio.to_thread(tile_state.crop, frame, ts, input_key, width, quality)
+        if tile:
+            return Response(content=tile, media_type="image/jpeg",
+                            headers={"Cache-Control": "no-store"})
+    ensured = vmix_client._livecap_ensure()
+    return Response(content=live_capture.placeholder(str(ensured.get("error") or "no live tile")),
+                    media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+@app.get("/api/vmix/live/input/{input_key}.mjpg")
+async def live_input_mjpg(input_key: str, _: bool = Depends(require_auth),
+                          w: Any = None, fps: Any = None, q: Any = None):
+    width, rate, quality = _tile_params(w, fps, q)
+    interval = 1.0 / rate
+
+    async def frame_generator():
+        idle_since = time.time()
+        while True:
+            if not tile_state.has(input_key):
+                break
+            frame, ts = live_capture.latest()
+            if frame:
+                tile = await asyncio.to_thread(
+                    tile_state.crop, frame, ts, input_key, width, quality)
+                if tile:
+                    idle_since = time.time()
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(tile)).encode("latin1") + b"\r\n\r\n"
+                        + tile + b"\r\n"
+                    )
+                elif time.time() - idle_since > 8.0:
+                    break
+            elif time.time() - idle_since > 8.0:
+                break
+            await asyncio.sleep(interval)
 
     return StreamingResponse(
         frame_generator(),

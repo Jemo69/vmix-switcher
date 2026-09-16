@@ -147,11 +147,12 @@ Snapshots are great for the grid, but motion needs video. vMix's built-in **Live
 2. In this app: tap **IMG** on the Program monitor (or corner hero) → it flips to **VIDEO**. Leave *LiveLAN Video URL* blank to auto-derive it per device, or paste the View Stream URL in Settings ⚙️ to pin it for the whole crew.
 3. Notes: ~10s behind live (tally lights stay instant — trust the red/green, not the video frame); tablets load it straight from the vMix PC so it works even when the switcher runs elsewhere; needs port `8088` reachable (same firewall note as below).
 
-### ⚡ Live Program stream (LIVE — sub-second, same binary)
-The Program monitor button cycles three sources: **IMG** (snapshots: accurate but ~1 fresh frame/sec) → **LIVE** (real motion, sub-second delay) → **VIDEO** (LiveLAN: smooth but ~10s behind). LIVE is captured on the vMix PC by the app itself — no extra software or services, and no display numbers to guess:
-1. Run this app **on the vMix PC** (LIVE is disabled with an honest reason anywhere else — a remote server will never show you its own desktop as your Program).
-2. In vMix, Settings → Outputs → Fullscreen → send **Program** to a second monitor. The app watches every display, matches each one against the actual Program picture, and locks on by itself — re-aiming automatically after every switch. (First run can take ~30s to lock; Settings → *Find Program display* forces it now.)
-3. Keep the browser on the **main** monitor. Tune *Stream rate* (10/15/25/30 fps) to your Wi-Fi. The pill reads `LIVE:25FPS` while running; if capture stops the monitor falls back to snapshots and says why. Settings shows which display it locked (with the match score) plus an aim-check preview proving it.
+### ⚡ Live sources everywhere (LIVE tiles + monitors — sub-second, same binary)
+Snapshots update ~1 frame/sec shared, so they can't show motion. The fix: vMix paints **every input onto one screen at once** (MultiView), the app captures that screen at ~25 fps and slices it back into a live tile per source. Every tile, the Preview monitor and the Program monitor all move in real time — so you see each source's current state *before* you switch to it.
+1. Run this app **on the vMix PC** (LIVE is disabled with an honest reason anywhere else).
+2. In vMix, Settings → Outputs → Fullscreen → send **MultiView** to a second monitor (any grid size). Keep the browser on the main monitor.
+3. That's the whole setup — no display numbers, no picking. The app matches every display against the real input pictures, learns the grid layout by itself (re-checking every 30s and after each switch), and each tile flips live on its own. Tiles read smooth motion at ~10 fps, monitors at ~25 fps; tally stays instant as always.
+4. No MultiView display found? Program-fullscreen is used as fallback (Program live, rest snapshots), and snapshots cover anything unmatched. Settings shows what locked (layout, match score, tile count) plus an aim-check preview and a *Find Program display* rescan.
 
 ---
 

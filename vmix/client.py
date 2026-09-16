@@ -4,11 +4,12 @@ import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .config import config_manager
 from .liveaim import aim_once
 from .livecap import clamp_fps, live_capture
+from .livemulti import scan_displays, tile_state
 from .mock import mock_vmix
 
 class VMixClient:
@@ -68,6 +69,8 @@ class VMixClient:
         self._livecap_last_aim: float = 0.0
         self._livecap_aim_active: Any = None
         self._livecap_aim_result: Dict[str, Any] = {}
+        self._live_mode: str = "none"  # none | program | multi
+        self._live_display: Optional[int] = None
 
     def add_callback(self, cb: Callable[[Dict[str, Any]], Any]) -> None:
         if cb not in self.callbacks:
@@ -256,6 +259,7 @@ class VMixClient:
                 "customColor": custom_color,
                 "isIgnored": is_ignored,
                 "isPriority": is_priority,
+                "liveTile": tile_state.has(inp_num_str) or tile_state.has(inp_key),
                 "snapAgeSec": self._snap_age_for_key(str(inp.get("key") or inp.get("number"))),
                 "snapError": self._snap_errors.get(str(inp.get("key"))) or self._snap_errors.get(str(inp.get("number"))),
             })
@@ -285,6 +289,9 @@ class VMixClient:
             "liveCapAvailable": livecap.get("available", False),
             "liveCapFps": livecap.get("fps", 25),
             "liveCapError": livecap.get("error"),
+            "liveMode": self._live_mode,
+            "liveDisplay": self._live_display,
+            "liveTiles": tile_state.info(),
             "snapFreshSec": self.SNAP_SUCCESS_FRESH,
             "snapMaxAgeSec": self.SNAP_MAX_FILE_AGE,
             **self.thumbnail_status(),
@@ -312,6 +319,8 @@ class VMixClient:
             full_state.get("liveCapAvailable"),
             full_state.get("liveCapFps"),
             full_state.get("liveCapError"),
+            full_state.get("liveMode"),
+            tuple(i["number"] for i in all_inputs if i.get("liveTile")),
             full_state.get("vmixHost"),
             full_state.get("thumbnailMode"),
             len(visible_inputs),
@@ -360,16 +369,18 @@ class VMixClient:
                 "error": st.get("error") or "capture failed"}
 
     async def _livecap_maybe_aim(self, full_state: Dict[str, Any]) -> None:
-        """Re-aim LIVE at the Program display: every 30s, or 5s after a switch."""
+        """Re-aim LIVE: every 30s, or 5s after a switch or input-list change."""
         try:
             cfg = config_manager.get()
             if (cfg.get("mockMode", False) or not cfg.get("liveCapEnabled", True)
                     or not cfg.get("liveCapAuto", True)):
                 return
             now = time.time()
-            active_now = full_state.get("active")
-            switched = active_now != self._livecap_aim_active
-            if (now - self._livecap_last_aim) > 30.0 or (switched and (now - self._livecap_last_aim) > 5.0):
+            inputs = full_state.get("allInputs", [])
+            fingerprint = (full_state.get("active"),
+                           tuple(str(i.get("number")) for i in inputs))
+            changed = fingerprint != self._livecap_aim_active
+            if (now - self._livecap_last_aim) > 30.0 or (changed and (now - self._livecap_last_aim) > 5.0):
                 await self._livecap_auto_aim(force=False)
         except Exception:
             pass
@@ -381,43 +392,91 @@ class VMixClient:
         return _Image.open(_io.BytesIO(data)).convert("RGB")
 
     async def _livecap_auto_aim(self, force: bool = False) -> Dict[str, Any]:
-        """Score every display against the Program picture; point LIVE at the winner."""
+        """Unified scan: prefer a MultiView display (every input live),
+        fall back to a Program-fullscreen display (program-only live)."""
         cfg = config_manager.get()
         if cfg.get("mockMode", False) or not self._is_vmix_local():
             live_capture.clear_auto()
+            tile_state.clear()
+            self._live_mode, self._live_display = "none", None
             return {"ok": False, "error": "needs the server on the vMix PC"}
         if not cfg.get("liveCapEnabled", True):
             live_capture.clear_auto()
+            tile_state.clear()
+            self._live_mode, self._live_display = "none", None
             return {"ok": False, "error": "disabled in settings"}
         if not force and not cfg.get("liveCapAuto", True):
             return {"ok": False, "error": "auto-aim off"}
+
+        # Reference pictures: current snapshots per input (JPEG only).
+        inputs = (self.last_state.get("allInputs", []) if self.last_state else [])[:16]
+        refs: List[Tuple[str, bytes]] = []
+        for inp in inputs:
+            try:
+                data, mime = await self.get_thumbnail(inp.get("number"))
+            except Exception:
+                continue
+            if data and not (mime or "").startswith("image/svg"):
+                refs.append((str(inp.get("number")), data))
+        active_num = str(self.last_state.get("active", "")) if self.last_state else ""
+        if len(refs) < 2:
+            # Too few pictures for layout learning: program-only aim, as before.
+            prog = next((b for k, b in refs if k == active_num), None)
+            if prog is None:
+                return {"ok": False, "error": "program snapshot not ready yet"}
+            try:
+                ref = await asyncio.to_thread(self._decode_ref, prog)
+                result = await asyncio.to_thread(aim_once, ref)
+            except Exception as err:
+                return {"ok": False, "error": f"aim scan failed: {err}"}
+            return self._apply_scan({
+                "mode": "program" if result.get("bestIdx") is not None else "none",
+                "display": result.get("bestIdx"),
+                "programScore": result.get("bestScore", 0.0),
+                "layout": None, "monitorCount": result.get("monitorCount", 0),
+            })
+
         try:
-            data, mime = await self.get_thumbnail("active")
-        except Exception as err:
-            return {"ok": False, "error": f"no program picture to aim with: {err}"}
-        if not data or (mime or "").startswith("image/svg"):
-            return {"ok": False, "error": "program snapshot not ready yet"}
-        try:
-            ref = await asyncio.to_thread(self._decode_ref, data)
-            result = await asyncio.to_thread(aim_once, ref)
+            result = await asyncio.to_thread(scan_displays, refs, active_num or None)
         except Exception as err:
             return {"ok": False, "error": f"aim scan failed: {err}"}
+        return self._apply_scan(result)
+
+    def _apply_scan(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        mode = result.get("mode", "none")
+        display = result.get("display")
+        layout = result.get("layout")
         self._livecap_last_aim = time.time()
         try:
-            self._livecap_aim_active = self.last_state.get("active") if self.last_state else None
+            st = self.last_state or {}
+            self._livecap_aim_active = (st.get("active"), tuple(
+                str(i.get("number")) for i in st.get("allInputs", [])))
         except Exception:
             pass
         self._livecap_aim_result = result
-        best = result.get("bestIdx")
-        if best is None:
-            live_capture.clear_auto()
-            return {"ok": False, "error": "no display matches Program — enable vMix fullscreen Program output",
-                    "monitorCount": result.get("monitorCount", 0),
-                    "scores": result.get("scores", [])}
-        live_capture.set_auto(int(best), float(result.get("bestScore") or 0.0))
-        return {"ok": True, "bestIdx": int(best), "bestScore": result.get("bestScore"),
-                "monitorCount": result.get("monitorCount", 0),
-                "scores": result.get("scores", [])}
+        if mode == "multi" and display is not None and layout:
+            live_capture.set_auto(int(display), float(layout.get("score") or 0.0))
+            tile_state.set(int(display), layout)
+            self._live_mode, self._live_display = "multi", int(display)
+            self._last_signature = None
+            return {"ok": True, "mode": "multi", "display": int(display),
+                    "layout": layout.get("layout"), "score": layout.get("score"),
+                    "tiles": len(layout.get("cells", {})),
+                    "monitorCount": result.get("monitorCount", 0)}
+        if mode == "program" and display is not None:
+            live_capture.set_auto(int(display), float(result.get("programScore") or 0.0))
+            tile_state.clear()
+            self._live_mode, self._live_display = "program", int(display)
+            self._last_signature = None
+            return {"ok": True, "mode": "program", "display": int(display),
+                    "score": result.get("programScore"),
+                    "monitorCount": result.get("monitorCount", 0)}
+        live_capture.clear_auto()
+        tile_state.clear()
+        self._live_mode, self._live_display = "none", None
+        return {"ok": False,
+                "error": "no display matches Program — enable vMix fullscreen (MultiView or Program) output",
+                "monitorCount": result.get("monitorCount", 0)}
 
     async def livecap_rescan(self) -> Dict[str, Any]:
         """Manual rescan (Settings button): aim now regardless of cadence."""

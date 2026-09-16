@@ -28,6 +28,10 @@ class SwitcherApp {
     this.liveCapError = '';
     this.vmixHost = '';
     this.lastMjpegUrl = '';
+    this._lastPrvMjpegUrl = '';
+    this._prvLiveActive = false;
+    this._gridLiveKey = '';
+    this._mvLiveKey = '';
     this.liveStatusTimer = null;
     this.liveFallbackToasted = false;
     this.livelanUrl = '';
@@ -68,6 +72,7 @@ class SwitcherApp {
       // Live Video Monitors & Method Switcher
       pgmMonitorImg: document.getElementById('pgm-monitor-img'),
       prvMonitorImg: document.getElementById('prv-monitor-img'),
+      prvLiveMjpeg: document.getElementById('prv-live-mjpeg'),
       pgmLiveMjpeg: document.getElementById('pgm-live-mjpeg'),
       mvLiveMjpeg: document.getElementById('mv-live-mjpeg'),
       pgmLiveFrame: document.getElementById('pgm-live-frame'),
@@ -286,6 +291,17 @@ class SwitcherApp {
     [this.dom.pgmLiveMjpeg, this.dom.mvLiveMjpeg].forEach(img => {
       if (img) img.addEventListener('error', () => this.onLiveStreamError());
     });
+    if (this.dom.prvLiveMjpeg) {
+      this.dom.prvLiveMjpeg.addEventListener('error', () => {
+        this._prvLiveActive = false;
+        this._lastPrvMjpegUrl = '';
+        if (this.dom.prvLiveMjpeg) {
+          this.dom.prvLiveMjpeg.classList.add('hidden');
+          this.dom.prvLiveMjpeg.removeAttribute('src');
+        }
+        if (this.dom.prvMonitorImg) this.dom.prvMonitorImg.classList.remove('hidden');
+      });
+    }
 
     // Thumbnail toggle button
     if (this.dom.thumbToggleBtn) {
@@ -304,6 +320,7 @@ class SwitcherApp {
         }
         if (this.currentState) {
           this.renderSourcesGrid(this.currentState.visibleInputs || [], true);
+          this.renderMultiviewGrid(this.currentState.visibleInputs || [], true);
         }
       });
     }
@@ -749,6 +766,7 @@ class SwitcherApp {
   // fresh object URL displays exactly the bytes just received — correct by
   // construction. 304 means "display already current": touch nothing.
   async refreshThumb(img) {
+    if (img.hasAttribute('data-live-input')) return; // live tiles stream themselves
     const inputNum = img.getAttribute('data-thumb-input');
     if (!inputNum) return;
     this.trackThumbVisibility(img);
@@ -879,7 +897,7 @@ class SwitcherApp {
         }
         if (previewNum !== this.lastMonitoredPreview) {
           this.lastMonitoredPreview = previewNum;
-          [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => retargetTick(img, previewNum, true));
+          [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => retargetTick(img, previewNum, !this._prvLiveActive));
         }
 
         [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => {
@@ -890,7 +908,7 @@ class SwitcherApp {
         });
 
         [this.dom.prvMonitorImg, this.dom.mvPrvImg]
-          .forEach(img => { if (img) this.refreshThumb(img); });
+          .forEach(img => { if (img && !this._prvLiveActive) this.refreshThumb(img); });
         if (pgmSnapshots) {
           [this.dom.pgmMonitorImg, this.dom.mvPgmImg]
             .forEach(img => { if (img) this.refreshThumb(img); });
@@ -1007,9 +1025,51 @@ class SwitcherApp {
     this.applyMonitorMode();
   }
 
+  // Per-input live tiles (sliced from the MultiView capture). Resolves the
+  // best motion source for any input: its own tile stream when learned,
+  // else '' (caller falls back to snapshots / fullscreen-program capture).
+  liveInputFor(num) {
+    if (!this.currentState || !this.currentState.allInputs) return null;
+    const s = String(num);
+    return this.currentState.allInputs.find(i => String(i.number) === s || String(i.key) === s) || null;
+  }
+
+  liveStreamUrlFor(num, w = 960, fps = 25) {
+    const inp = this.liveInputFor(num);
+    if (inp && inp.liveTile) return API.getLiveInputUrl(inp.number, w, fps);
+    return '';
+  }
+
+  programLiveUrl() {
+    const num = this.lastMonitoredActive || (this.currentState && this.currentState.active);
+    const tile = num ? this.liveStreamUrlFor(num, 960, 25) : '';
+    if (tile) return tile;
+    return (this.monitorMode === 'live' && this.liveCapAvailable) ? API.getLiveStreamUrl() : '';
+  }
+
+  // Preview monitor prefers its input's live tile whenever learned
+  // (Preview has no LiveLAN equivalent, so this is a strict upgrade).
+  syncPreviewLive() {
+    const st = this.currentState;
+    const active = st && st.allInputs ? st.allInputs.find(i => i.isPreview) : null;
+    const num = active ? active.number : (st ? st.preview : null);
+    const url = num ? this.liveStreamUrlFor(num, 640, 15) : '';
+    const show = Boolean(url) && this.showThumbnails;
+    this._prvLiveActive = show;
+    const mjpeg = this.dom.prvLiveMjpeg;
+    const snap = this.dom.prvMonitorImg;
+    if (mjpeg) {
+      mjpeg.classList.toggle('hidden', !show);
+      if (show && this._lastPrvMjpegUrl !== url) mjpeg.setAttribute('src', url);
+      else if (!show) mjpeg.removeAttribute('src');
+    }
+    if (snap) snap.classList.toggle('hidden', show);
+    this._lastPrvMjpegUrl = show ? url : '';
+  }
+
   applyMonitorMode() {
     const mode = this.monitorMode || 'img';
-    const liveUrl = (mode === 'live' && this.liveCapAvailable) ? API.getLiveStreamUrl() : '';
+    const liveUrl = (mode === 'live') ? this.programLiveUrl() : '';
     const videoUrl = (mode === 'video') ? this.resolveLiveLanUrl() : '';
     const showLive = Boolean(liveUrl);
     const showVideo = mode === 'video' && Boolean(videoUrl);
@@ -1336,12 +1396,20 @@ class SwitcherApp {
     }
     if (previewNum !== this.lastMonitoredPreview) {
       this.lastMonitoredPreview = previewNum;
-      [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => retarget(img, previewNum, true));
+      [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => retarget(img, previewNum, !this._prvLiveActive));
     } else {
       [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => {
         if (img && !img.getAttribute('data-thumb-input')) img.setAttribute('data-thumb-input', previewNum);
       });
     }
+    // Program layer follows the routed input in live/video modes (tile URL
+    // embeds the input number, so re-apply on change).
+    if ((this.monitorMode === 'live' || this.monitorMode === 'video') && activeNum !== this._lastAppliedActive) {
+      this._lastAppliedActive = activeNum;
+      this.applyMonitorMode();
+    }
+    // Preview prefers its input's live tile whenever one is learned.
+    this.syncPreviewLive();
     if (this.dom.mvPgmTitle) this.dom.mvPgmTitle.textContent = activeTitle;
     if (this.dom.mvPrvTitle) this.dom.mvPrvTitle.textContent = previewTitle;
     if (this.dom.mvPgmNum) this.dom.mvPgmNum.textContent = activeNum || '--';
@@ -1431,12 +1499,16 @@ class SwitcherApp {
     const existingCards = this.dom.sourcesGrid.querySelectorAll('.source-card');
     const existingNums = Array.from(existingCards).map(c => c.getAttribute('data-input'));
     const newNums = inputs.map(i => String(i.number));
+    // A liveTile flip changes the <img> plumbing (stream vs poll): rebuild.
+    const liveKey = (inputs || []).map(i => `${i.number}:${i.liveTile ? 1 : 0}`).join(',');
 
     const canUpdateInPlace = !forceRebuild &&
       existingNums.length === newNums.length &&
-      existingNums.every((val, idx) => val === newNums[idx]);
+      existingNums.every((val, idx) => val === newNums[idx]) &&
+      liveKey === this._gridLiveKey;
 
     if (canUpdateInPlace) {
+      this._gridLiveKey = liveKey;
       existingCards.forEach((card, idx) => {
         const inp = inputs[idx];
         const isPriority = this.isPriorityInput(inp);
@@ -1516,12 +1588,20 @@ class SwitcherApp {
 
       const showBadge = inp.isLiveSource || isPriority;
       const badgeLabel = isPriority ? `★ ${this.feedBadgeLabel(inp)}` : this.feedBadgeLabel(inp);
-      const thumbHtml = this.showThumbnails ? `
+      // Live tiles stream themselves (no snapshot polling); everything else
+      // keeps today's snapshot path. Toggle off hides both and saves bandwidth.
+      const liveTile = Boolean(inp.liveTile) && this.showThumbnails;
+      const thumbHtml = liveTile ? `
+        <div class="source-thumb-container">
+          <img class="source-thumb-img" data-live-input="${inp.number}" src="${API.getLiveInputUrl(inp.number, 384, 10)}" alt="" loading="lazy">
+          ${showBadge ? `<span class="live-feed-badge ${isPriority ? 'is-priority-feed' : ''} type-${typeLower}"><span class="live-signal-dot ${signalLive ? 'live' : ''}"></span>${this.escapeHtml(badgeLabel)}</span>` : ''}
+        </div>
+      ` : (this.showThumbnails ? `
         <div class="source-thumb-container">
           <img class="source-thumb-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">
           ${showBadge ? `<span class="live-feed-badge ${isPriority ? 'is-priority-feed' : ''} type-${typeLower}"><span class="live-signal-dot ${signalLive ? 'live' : ''}"></span>${this.escapeHtml(badgeLabel)}</span>` : ''}
         </div>
-      ` : '';
+      ` : '');
 
       card.innerHTML = `
         <div class="source-card-header">
@@ -1563,6 +1643,7 @@ class SwitcherApp {
     this.dom.sourcesGrid.querySelectorAll('img').forEach(img => this.revokeImgBlob(img));
     this.dom.sourcesGrid.innerHTML = '';
     this.dom.sourcesGrid.appendChild(fragment);
+    this._gridLiveKey = liveKey;
   }
 
   // Handle clicking a source button
@@ -1759,7 +1840,7 @@ class SwitcherApp {
     return input.signalStatus === 'live' ? 'SIGNAL LIVE' : 'STANDBY';
   }
 
-  renderMultiviewGrid(inputs) {
+  renderMultiviewGrid(inputs, forceRebuild = false) {
     if (!this.dom.multiviewCamsGrid) return;
     if (!inputs || inputs.length === 0) {
       this.dom.multiviewCamsGrid.innerHTML = `
@@ -1773,11 +1854,14 @@ class SwitcherApp {
     const existingTiles = this.dom.multiviewCamsGrid.querySelectorAll('.multiview-cam-tile');
     const existingNums = Array.from(existingTiles).map(t => t.getAttribute('data-mv-input'));
     const newNums = inputs.map(i => String(i.number));
+    const mvLiveKey = (inputs || []).map(i => `${i.number}:${i.liveTile ? 1 : 0}`).join(',');
 
-    const canUpdateInPlace = existingNums.length === newNums.length &&
-      existingNums.every((val, idx) => val === newNums[idx]);
+    const canUpdateInPlace = !forceRebuild && existingNums.length === newNums.length &&
+      existingNums.every((val, idx) => val === newNums[idx]) &&
+      mvLiveKey === this._mvLiveKey;
 
     if (canUpdateInPlace) {
+      this._mvLiveKey = mvLiveKey;
       existingTiles.forEach((tile, idx) => {
         const inp = inputs[idx];
         const isPriority = this.isPriorityInput(inp);
@@ -1835,8 +1919,15 @@ class SwitcherApp {
       const statusText = this.getMultiviewSignalLabel(inp);
       const signalClass = isReceiving ? 'feed-live' : 'feed-standby';
 
+      const liveTile = Boolean(inp.liveTile) && this.showThumbnails;
+      const mvImg = liveTile
+        ? `<img class="mv-cam-img" data-live-input="${inp.number}" src="${API.getLiveInputUrl(inp.number, 384, 10)}" alt="" loading="lazy">`
+        : (this.showThumbnails
+          ? `<img class="mv-cam-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">`
+          : '');
+
       tile.innerHTML = `
-        <img class="mv-cam-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">
+        ${mvImg}
         <span class="mv-cam-badge type-${typeLower}">${liveDot}${badgeLabel}</span>
         <span class="mv-cam-status-pill ${inp.isActive ? 'live' : (inp.isPreview ? 'prv' : (inp.isLiveSource ? signalClass : ''))}">${statusText}</span>
         <div class="mv-cam-take-action">
@@ -1868,6 +1959,7 @@ class SwitcherApp {
     this.dom.multiviewCamsGrid.querySelectorAll('img').forEach(img => this.revokeImgBlob(img));
     this.dom.multiviewCamsGrid.innerHTML = '';
     this.dom.multiviewCamsGrid.appendChild(fragment);
+    this._mvLiveKey = mvLiveKey;
   }
 
   // ---- Priority tier (operator picks, per-venue cap) ----

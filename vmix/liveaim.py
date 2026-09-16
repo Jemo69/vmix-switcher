@@ -120,17 +120,47 @@ def _zncc(a: List[float], b: List[float]) -> float:
 def _sim_probes(rp, cp) -> float:
     rs = [_zncc(rp[i], cp[i]) for i in range(3)]
     return max(0.0, sum(rs) / 3.0)
-    n = len(a)
-    if n == 0:
+
+
+def hist_corr(a_image, b_image) -> float:
+    """0..1 palette match (motion-invariant: same feed across movement ~1.0).
+
+    Complements ZNCC, which drops under heavy motion. Different scenes
+    score low unless their palettes truly coincide (rare; and tile layout
+    assignment still requires exclusive best-fit per input).
+    """
+    try:
+        ha = a_image.convert("RGB").resize(PROBE_SIZE).histogram()
+        hb = b_image.convert("RGB").resize(PROBE_SIZE).histogram()
+    except Exception:
         return 0.0
-    ma = sum(a) / n
-    mb = sum(b) / n
-    num = sum((x - ma) * (y - mb) for x, y in zip(a, b))
-    da = sum((x - ma) ** 2 for x in a)
-    db = sum((y - mb) ** 2 for y in b)
-    if da <= 0 or db <= 0:
-        return 1.0 if da == db else 0.0
-    return max(-1.0, min(1.0, num / math.sqrt(da * db)))
+    total = 0.0
+    for c in range(3):
+        ca = ha[c * 256:(c + 1) * 256]
+        cb = hb[c * 256:(c + 1) * 256]
+        ba = [sum(ca[i * 16:(i + 1) * 16]) for i in range(16)]
+        bb = [sum(cb[i * 16:(i + 1) * 16]) for i in range(16)]
+        ma = sum(ba) / 16.0
+        mb = sum(bb) / 16.0
+        num = sum((x - ma) * (y - mb) for x, y in zip(ba, bb))
+        da = sum((x - ma) ** 2 for x in ba)
+        db = sum((y - mb) ** 2 for y in bb)
+        if da <= 0 and db <= 0:
+            total += 1.0
+        elif da <= 0 or db <= 0:
+            total += 0.0
+        else:
+            total += max(0.0, num / math.sqrt(da * db))
+    return total / 3.0
+
+
+def match_score(ref_image, cand_image) -> float:
+    """Best of structure (ZNCC, aspect/bar-robust) and palette signals."""
+    try:
+        return max(similarity(ref_image, cand_image),
+                   hist_corr(ref_image, cand_image))
+    except Exception:
+        return 0.0
 
 
 def similarity(ref_image, cand_image) -> float:
