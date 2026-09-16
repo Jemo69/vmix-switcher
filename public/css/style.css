@@ -696,6 +696,16 @@ select,
   background: #000;
 }
 
+/* LIVE capture aim check in Settings: shows what the chosen display sees. */
+.livecap-preview {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+  background: #000;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+}
 /* IMG / VIDEO source toggle: plain-text machined key, pushed right. Active
    = solid fill so the mode reads at arm's length, never color-only. */
 .monitor-video-toggle {

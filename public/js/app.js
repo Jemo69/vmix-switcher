@@ -160,6 +160,9 @@ class SwitcherApp {
       settingLivecapEnabled: document.getElementById('setting-livecap-enabled'),
       settingLivecapMonitor: document.getElementById('setting-livecap-monitor'),
       settingLivecapFps: document.getElementById('setting-livecap-fps'),
+      settingLivecapPreview: document.getElementById('setting-livecap-preview'),
+      settingLivecapMonitors: document.getElementById('setting-livecap-monitors'),
+      settingLivecapRefreshBtn: document.getElementById('setting-livecap-refresh-btn'),
       settingNewPassword: document.getElementById('setting-new-password'),
       networkIpsList: document.getElementById('network-ips-list'),
       settingsSaveStatus: document.getElementById('settings-save-status'),
@@ -442,6 +445,9 @@ class SwitcherApp {
     }
     if (this.dom.settingsClearPriorityBtn) {
       this.dom.settingsClearPriorityBtn.addEventListener('click', () => this.clearPrioritySources());
+    }
+    if (this.dom.settingLivecapRefreshBtn) {
+      this.dom.settingLivecapRefreshBtn.addEventListener('click', () => this.loadLivecapPreview());
     }
 
     // Settings Modal
@@ -2158,6 +2164,7 @@ class SwitcherApp {
       if (this.dom.settingLivecapFps) {
         this.dom.settingLivecapFps.value = String(cfg.liveCapFps || 25);
       }
+      this.loadLivecapPreview();
       this.dom.settingNewPassword.value = '';
 
       // Load network IPs
@@ -2169,6 +2176,25 @@ class SwitcherApp {
 
   closeSettingsModal() {
     this.dom.settingsModal.classList.add('hidden');
+  }
+
+  async loadLivecapPreview() {
+    // Aim check: show exactly what the chosen display currently feeds LIVE.
+    // A mirrored settings page here means the capture points at the browser.
+    try {
+      if (this.dom.settingLivecapPreview) {
+        const bust = Date.now();
+        this.dom.settingLivecapPreview.src = `${API.getLiveStillUrl()}&t=${bust}`;
+      }
+      const st = await API.getLiveStatus();
+      if (this.dom.settingLivecapMonitors && st) {
+        const n = st.monitorCount ?? '?';
+        const fps = st.fpsActual || st.fpsTarget || '?';
+        const err = (!st.available && st.error) ? ` — ${st.error}` : '';
+        this.dom.settingLivecapMonitors.textContent =
+          `${n} display(s) detected • ${fps} fps${err}`;
+      }
+    } catch {}
   }
 
   async loadNetworkIps() {
