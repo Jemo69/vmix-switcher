@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from typing import Any, Callable, Dict, List, Optional
 
 from .config import config_manager
+from .livecap import clamp_fps, live_capture
 from .mock import mock_vmix
 
 class VMixClient:
@@ -254,6 +255,8 @@ class VMixClient:
 
         visible_inputs = [i for i in all_inputs if not i["isIgnored"]]
 
+        livecap = self._livecap_ensure()
+
         full_state = {
             **state,
             "isMock": is_mock,
@@ -270,7 +273,11 @@ class VMixClient:
             "priorityInputs": sorted(list(self._priority_set()), key=lambda x: (0, int(x)) if x.isdigit() else (1, x)),
             "maxPriorityInputs": config_manager.max_priority_inputs(),
             "livelanUrl": cfg.get("livelanUrl", ""),
+            "vmixHost": cfg.get("vmixHost", "127.0.0.1"),
             "vmixPort": cfg.get("vmixPort", 8088),
+            "liveCapAvailable": livecap.get("available", False),
+            "liveCapFps": livecap.get("fps", 25),
+            "liveCapError": livecap.get("error"),
             "snapFreshSec": self.SNAP_SUCCESS_FRESH,
             "snapMaxAgeSec": self.SNAP_MAX_FILE_AGE,
             **self.thumbnail_status(),
@@ -295,6 +302,10 @@ class VMixClient:
             full_state.get("backgroundFps"),
             tuple(full_state.get("priorityInputs", [])),
             full_state.get("maxPriorityInputs"),
+            full_state.get("liveCapAvailable"),
+            full_state.get("liveCapFps"),
+            full_state.get("liveCapError"),
+            full_state.get("vmixHost"),
             full_state.get("thumbnailMode"),
             len(visible_inputs),
             tuple((i["number"], i.get("isActive"), i.get("isPreview"), tuple(i.get("activeOverlays", [])), i.get("muted"), i.get("volume"), i.get("state"), i.get("signalStatus"), i.get("isPriority"), i.get("customTitle"), i.get("isIgnored"), i.get("snapError")) for i in all_inputs)
@@ -307,6 +318,39 @@ class VMixClient:
             self._notify(full_state)
 
         return full_state
+
+    def _livecap_ensure(self) -> Dict[str, Any]:
+        """Keep the low-latency capture in its correct state and report it.
+
+        Runs on every poll (idempotent, no restarts): capture is allowed
+        ONLY on the vMix PC outside simulator mode, so a remote server can
+        never stream its own desktop as the Program feed.
+        """
+        cfg = config_manager.get()
+        fps = clamp_fps(cfg.get("liveCapFps", 25))
+        if cfg.get("mockMode", False):
+            live_capture.stop("simulator mode")
+            return {"available": False, "fps": fps, "error": "simulator mode"}
+        if not self._is_vmix_local():
+            live_capture.stop("needs the server on the vMix PC")
+            return {"available": False, "fps": fps,
+                    "error": "needs the server on the vMix PC"}
+        if not cfg.get("liveCapEnabled", True):
+            live_capture.stop("disabled in settings")
+            return {"available": False, "fps": fps,
+                    "error": "disabled in settings"}
+        live_capture.configure(
+            fps,
+            cfg.get("liveCapMonitor", 1),
+            cfg.get("liveCapWidth", 960),
+            cfg.get("liveCapQuality", 70),
+        )
+        live_capture.start()
+        st = live_capture.status()
+        if st.get("running"):
+            return {"available": True, "fps": fps, "error": None}
+        return {"available": False, "fps": fps,
+                "error": st.get("error") or "capture failed"}
 
     def _notify(self, state: Dict[str, Any]) -> None:
         for cb in list(self.callbacks):

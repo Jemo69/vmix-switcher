@@ -10,5 +10,16 @@
   "inputAliases": {},
   "inputColors": {},
   "pollIntervalMs": 300,
-  "mockMode": false
+  "previewFps": 4,
+  "backgroundFps": 1.5,
+  "priorityInputs": [],
+  "maxPriorityInputs": 20,
+  "livelanUrl": "",
+  "liveCapEnabled": true,
+  "liveCapMonitor": 1,
+  "liveCapFps": 25,
+  "liveCapWidth": 960,
+  "liveCapQuality": 70,
+  "mockMode": false,
+  "authTokenSecret": "c27216241fb0456871804b6d0543ff0652092f4dde4984f3"
 }

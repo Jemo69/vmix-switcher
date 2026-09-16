@@ -40,6 +40,10 @@ HIDDEN_IMPORTS = [
     "pydantic",
     "websockets",
     "websockets.legacy",
+    "PIL",
+    "PIL.Image",
+    "PIL.ImageDraw",
+    "mss",
 ]
 
 

@@ -31,6 +31,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                                # raise it; small setups lower it to protect Wi-Fi/vMix.
     "livelanUrl": "",          # Optional explicit LiveLAN video URL (http://vMix-IP:8088/livelan).
                                # Empty = auto-derive per device from the page host + vmixPort.
+    # Low-latency live Program capture (same binary, no external services).
+    # Captures the vMix PC display: pair with vMix Fullscreen Program output.
+    "liveCapEnabled": True,
+    "liveCapMonitor": 1,
+    "liveCapFps": 25,
+    "liveCapWidth": 960,
+    "liveCapQuality": 70,
     "mockMode": False,
     "authTokenSecret": secrets.token_hex(24)
 }

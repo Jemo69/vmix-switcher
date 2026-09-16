@@ -318,6 +318,82 @@ def test_all():
         assert res["config"]["previewFps"] == 60.0 and res["config"]["backgroundFps"] == 0.1, res["config"]
         print("✓ Pull-rate settings round-trip with clamps (0.5–60 priority, 0.1–5 eco)")
 
+        # 24. Live capture config round-trip + clamps (5-30 fps, 0-16 monitor, 320-1920 width, 40-90 quality)
+        status, res = req(f"{base}/api/config", "PUT", {
+            "liveCapEnabled": True, "liveCapMonitor": 1, "liveCapFps": 25,
+            "liveCapWidth": 960, "liveCapQuality": 70
+        }, token=token)
+        assert status == 200 and res.get("success") is True
+        cfg = res.get("config", {})
+        assert cfg.get("liveCapFps") == 25 and cfg.get("liveCapMonitor") == 1
+        assert cfg.get("liveCapWidth") == 960 and cfg.get("liveCapQuality") == 70
+        assert cfg.get("liveCapEnabled") is True
+        print("✓ Live capture config round-trip verified")
+        status, res = req(f"{base}/api/config", "PUT", {
+            "liveCapFps": 999, "liveCapMonitor": 99, "liveCapWidth": 5000, "liveCapQuality": 5
+        }, token=token)
+        assert status == 200
+        cfg = res.get("config", {})
+        assert cfg.get("liveCapFps") == 30, cfg
+        assert cfg.get("liveCapMonitor") == 16, cfg
+        assert cfg.get("liveCapWidth") == 1920, cfg
+        assert cfg.get("liveCapQuality") == 40, cfg
+        status, res = req(f"{base}/api/config", "PUT", {"liveCapFps": 0}, token=token)
+        assert res.get("config", {}).get("liveCapFps") == 5, res
+        print("✓ Live capture config clamps verified (5-30 fps, 0-16 monitor, 320-1920 width, 40-90 quality)")
+
+        # 25. Live capture clamp unit checks
+        from vmix.livecap import clamp_fps, clamp_monitor, clamp_quality, clamp_width
+        assert (clamp_fps(25), clamp_fps(999), clamp_fps(0), clamp_fps("x")) == (25, 30, 5, 25)
+        assert (clamp_monitor(1), clamp_monitor(99), clamp_monitor(-3)) == (1, 16, 0)
+        assert (clamp_width(960), clamp_width(9), clamp_width(99999)) == (960, 320, 1920)
+        assert (clamp_quality(70), clamp_quality(1), clamp_quality(500)) == (70, 40, 90)
+        print("✓ Live capture clamp helpers verified")
+
+        # 26. Live status endpoint (mock mode -> honestly unavailable, never a wrong feed)
+        status, res = req(f"{base}/api/vmix/live/status", "GET", token=token)
+        assert status == 200, f"Expected 200 for live status, got {status}"
+        for key in ("running", "available", "fpsTarget", "monitorRequested", "error"):
+            assert key in res, f"live status missing key {key}"
+        assert res.get("available") is False, "mock mode must report unavailable"
+        assert "simulator" in str(res.get("error", "")).lower(), res
+        print("✓ Live status endpoint verified (honest unavailable in simulator mode)")
+
+        # 27. Live still endpoint always returns a valid JPEG (placeholder when unavailable)
+        still_req = urllib.request.Request(f"{base}/api/vmix/live/program.jpg?token={token}")
+        with urllib.request.urlopen(still_req, timeout=5.0) as resp:
+            assert resp.status == 200
+            assert "image/jpeg" in resp.headers.get("Content-Type", "")
+            still_data = resp.read()
+            assert still_data[:2] == b"\xff\xd8", "must be a real JPEG (SOI marker)"
+            assert len(still_data) > 1000, "placeholder slate must have content"
+        print("✓ Live still endpoint verified (valid JPEG placeholder when unavailable)")
+
+        # 28. Live MJPEG endpoint: unavailable -> clean empty multipart (no frozen fake-live frame)
+        mjpg_req = urllib.request.Request(f"{base}/api/vmix/live/program.mjpg?token={token}")
+        with urllib.request.urlopen(mjpg_req, timeout=5.0) as resp:
+            assert resp.status == 200
+            assert "multipart/x-mixed-replace" in resp.headers.get("Content-Type", "")
+            body = resp.read()
+            assert b"\xff\xd8" not in body, "must not serve frames while unavailable"
+        print("✓ Live MJPEG endpoint verified (ends cleanly while unavailable)")
+
+        # 29. State carries live-capture availability + vMix host for LiveLAN derivation
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        assert status == 200
+        assert "liveCapAvailable" in res and "liveCapFps" in res and "vmixHost" in res
+        assert res.get("liveCapAvailable") is False
+        print("✓ State live-capture fields verified")
+
+        # 30. Live endpoints require auth
+        anon_req = urllib.request.Request(f"{base}/api/vmix/live/status")
+        try:
+            with urllib.request.urlopen(anon_req, timeout=3.0) as resp:
+                raise AssertionError(f"Expected 401, got {resp.status}")
+        except urllib.error.HTTPError as err:
+            assert err.code == 401, f"Expected 401, got {err.code}"
+        print("✓ Live endpoints enforce authentication")
+
         print("\nALL PYTHON INTEGRATION TESTS PASSED! 🎉")
     finally:
         config_manager.config = initial_config
