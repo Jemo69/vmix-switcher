@@ -17,25 +17,13 @@ class SwitcherApp {
     this.ecoTimer = null;
     this.ecoTickCount = 0;
     this.toastTimer = null;
-    // Program monitor source mode: 'img' (snapshots) | 'live' (low-latency
-    // MJPEG capture, sub-second) | 'video' (LiveLAN iframe, ~10s delay).
-    // No explicit choice yet -> the app takes LIVE by itself the moment the
-    // server reports it (that is the whole point of the feature).
-    this.monitorMode = localStorage.getItem('vmix_monitor_mode_v2') || 'img';
-    this._monitorPrefStored = Boolean(localStorage.getItem('vmix_monitor_mode_v2'));
-    this.liveCapAvailable = false;
-    this.liveCapFps = 25;
-    this.liveCapError = '';
-    this.vmixHost = '';
-    this.lastMjpegUrl = '';
-    this._lastPrvMjpegUrl = '';
-    this._prvLiveActive = false;
-    this._gridLiveKey = '';
-    this._mvLiveKey = '';
-    this.liveStatusTimer = null;
-    this.liveFallbackToasted = false;
+    // True-motion Program video via vMix LiveLAN (iframe embed, ~10s delay).
+    // Per-device toggle; the URL itself syncs from server config/state so the
+    // whole crew shares one setting. Snapshots stay as fallback + Preview.
+    this.liveVideo = localStorage.getItem('vmix_live_video') === '1';
     this.livelanUrl = '';
     this.vmixPort = 8088;
+    this.lastLiveFrameUrl = '';
     this.visibleThumbs = new WeakSet();
     this.thumbObserver = null;
     this.audioCtx = null;
@@ -72,9 +60,6 @@ class SwitcherApp {
       // Live Video Monitors & Method Switcher
       pgmMonitorImg: document.getElementById('pgm-monitor-img'),
       prvMonitorImg: document.getElementById('prv-monitor-img'),
-      prvLiveMjpeg: document.getElementById('prv-live-mjpeg'),
-      pgmLiveMjpeg: document.getElementById('pgm-live-mjpeg'),
-      mvLiveMjpeg: document.getElementById('mv-live-mjpeg'),
       pgmLiveFrame: document.getElementById('pgm-live-frame'),
       pgmVideoToggle: document.getElementById('pgm-video-toggle'),
       mvLiveFrame: document.getElementById('mv-live-frame'),
@@ -162,12 +147,6 @@ class SwitcherApp {
       manageAutoPriorityBtn: document.getElementById('manage-auto-priority-btn'),
       manageClearPriorityBtn: document.getElementById('manage-clear-priority-btn'),
       settingLivelanUrl: document.getElementById('setting-livelan-url'),
-      settingLivecapEnabled: document.getElementById('setting-livecap-enabled'),
-      settingLivecapFps: document.getElementById('setting-livecap-fps'),
-      settingLivecapRescanBtn: document.getElementById('setting-livecap-rescan-btn'),
-      settingLivecapPreview: document.getElementById('setting-livecap-preview'),
-      settingLivecapMonitors: document.getElementById('setting-livecap-monitors'),
-      settingLivecapRefreshBtn: document.getElementById('setting-livecap-refresh-btn'),
       settingNewPassword: document.getElementById('setting-new-password'),
       networkIpsList: document.getElementById('network-ips-list'),
       settingsSaveStatus: document.getElementById('settings-save-status'),
@@ -278,29 +257,12 @@ class SwitcherApp {
       this.dom.audioLiveAllBtn.addEventListener('click', () => this.unmuteAllAudio());
     }
 
-    // Program monitor source: cycles IMG -> LIVE -> VIDEO. Skips LIVE with
-    // an explanation when the server can't capture (e.g. remote server).
+    // Program true-motion video toggles (switcher monitor + multiview hero share one mode)
     if (this.dom.pgmVideoToggle) {
-      this.dom.pgmVideoToggle.addEventListener('click', () => this.cycleMonitorMode());
+      this.dom.pgmVideoToggle.addEventListener('click', () => this.setLiveVideo(!this.liveVideo));
     }
     if (this.dom.mvVideoToggle) {
-      this.dom.mvVideoToggle.addEventListener('click', () => this.cycleMonitorMode());
-    }
-    // A dead MJPEG stream must never sit as a broken "live" picture:
-    // fall back to snapshots and say why.
-    [this.dom.pgmLiveMjpeg, this.dom.mvLiveMjpeg].forEach(img => {
-      if (img) img.addEventListener('error', () => this.onLiveStreamError());
-    });
-    if (this.dom.prvLiveMjpeg) {
-      this.dom.prvLiveMjpeg.addEventListener('error', () => {
-        this._prvLiveActive = false;
-        this._lastPrvMjpegUrl = '';
-        if (this.dom.prvLiveMjpeg) {
-          this.dom.prvLiveMjpeg.classList.add('hidden');
-          this.dom.prvLiveMjpeg.removeAttribute('src');
-        }
-        if (this.dom.prvMonitorImg) this.dom.prvMonitorImg.classList.remove('hidden');
-      });
+      this.dom.mvVideoToggle.addEventListener('click', () => this.setLiveVideo(!this.liveVideo));
     }
 
     // Thumbnail toggle button
@@ -320,7 +282,6 @@ class SwitcherApp {
         }
         if (this.currentState) {
           this.renderSourcesGrid(this.currentState.visibleInputs || [], true);
-          this.renderMultiviewGrid(this.currentState.visibleInputs || [], true);
         }
       });
     }
@@ -463,12 +424,6 @@ class SwitcherApp {
     if (this.dom.settingsClearPriorityBtn) {
       this.dom.settingsClearPriorityBtn.addEventListener('click', () => this.clearPrioritySources());
     }
-    if (this.dom.settingLivecapRefreshBtn) {
-      this.dom.settingLivecapRefreshBtn.addEventListener('click', () => this.loadLivecapPreview());
-    }
-    if (this.dom.settingLivecapRescanBtn) {
-      this.dom.settingLivecapRescanBtn.addEventListener('click', () => this.rescanLiveProgram());
-    }
 
     // Settings Modal
     this.dom.settingsBtn.addEventListener('click', () => this.openSettingsModal());
@@ -505,7 +460,7 @@ class SwitcherApp {
 
   async start() {
     await this.loadConfig();
-    this.applyMonitorMode();
+    this.applyLiveVideo();
     this.connectWebSocket();
     this.startThumbnailRefresh();
   }
@@ -766,7 +721,6 @@ class SwitcherApp {
   // fresh object URL displays exactly the bytes just received — correct by
   // construction. 304 means "display already current": touch nothing.
   async refreshThumb(img) {
-    if (img.hasAttribute('data-live-input')) return; // live tiles stream themselves
     const inputNum = img.getAttribute('data-thumb-input');
     if (!inputNum) return;
     this.trackThumbVisibility(img);
@@ -878,10 +832,9 @@ class SwitcherApp {
       if (this.currentState) {
         const activeNum = this.currentState.active || 'active';
         const previewNum = this.currentState.preview || 'preview';
-        // Video mode covers Program with the LiveLAN stream, LIVE mode with
-        // the low-latency capture: skip its snapshot polling entirely so
-        // weak Wi-Fi + the vMix PC get real relief.
-        const pgmSnapshots = (this.monitorMode === 'img');
+        // Video mode covers Program with the LiveLAN stream: skip its snapshot
+        // polling entirely so weak Wi-Fi + the vMix PC get real relief.
+        const pgmSnapshots = !this.liveVideo;
         // Input changed on a monitor: abort the old flight and pull now.
         const retargetTick = (img, num, force) => {
           if (!img) return;
@@ -897,7 +850,7 @@ class SwitcherApp {
         }
         if (previewNum !== this.lastMonitoredPreview) {
           this.lastMonitoredPreview = previewNum;
-          [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => retargetTick(img, previewNum, !this._prvLiveActive));
+          [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => retargetTick(img, previewNum, true));
         }
 
         [this.dom.pgmMonitorImg, this.dom.mvPgmImg].forEach(img => {
@@ -908,7 +861,7 @@ class SwitcherApp {
         });
 
         [this.dom.prvMonitorImg, this.dom.mvPrvImg]
-          .forEach(img => { if (img && !this._prvLiveActive) this.refreshThumb(img); });
+          .forEach(img => { if (img) this.refreshThumb(img); });
         if (pgmSnapshots) {
           [this.dom.pgmMonitorImg, this.dom.mvPgmImg]
             .forEach(img => { if (img) this.refreshThumb(img); });
@@ -964,214 +917,74 @@ class SwitcherApp {
     }
   }
 
-  // ---- Program monitor source: IMG | LIVE | VIDEO ----
-  // IMG: vMix snapshots (accurate routing, ~1 fresh frame/sec shared).
-  // LIVE: low-latency MJPEG capture from this same server (~25 fps,
-  //   sub-second). Needs the server on the vMix PC + capture enabled.
-  // VIDEO: vMix LiveLAN iframe (smooth but ~10s behind; tally stays instant).
+  // ---- True-motion Program video (vMix LiveLAN) ----
+  // Tablets load the LiveLAN page straight from the vMix PC, so this works
+  // whether this switcher runs on the vMix box or elsewhere on the LAN, and
+  // costs one efficient H264 stream instead of per-tile snapshot polling.
   resolveLiveLanUrl() {
     if (this.livelanUrl) return this.livelanUrl;
     try {
       const port = this.vmixPort || 8088;
-      // Prefer the configured vMix host when it is a real LAN address:
-      // the page host is only the vMix PC when this server runs on it.
-      const host = String(this.vmixHost || '').trim().toLowerCase();
-      const useVmix = host && !['127.0.0.1', 'localhost', '::1'].includes(host)
-        ? String(this.vmixHost).trim() : window.location.hostname;
-      return `${window.location.protocol}//${useVmix}:${port}/livelan`;
+      return `${window.location.protocol}//${window.location.hostname}:${port}/livelan`;
     } catch {
       return '';
     }
   }
 
-  cycleMonitorMode() {
-    const order = ['img', 'live', 'video'];
-    let next = order[(order.indexOf(this.monitorMode) + 1) % order.length];
-    if (next === 'live' && !this.liveCapAvailable) {
-      const reason = this.liveCapError || 'live capture unavailable';
-      this.showToast(`LIVE unavailable (${reason}) — showing delayed VIDEO`, 3500);
-      next = 'video';
-    }
-    this.setMonitorMode(next);
+  setLiveVideo(on) {
+    this.liveVideo = Boolean(on);
+    try { localStorage.setItem('vmix_live_video', this.liveVideo ? '1' : '0'); } catch {}
+    this.applyLiveVideo();
+    if (this.liveVideo) this.vibrate();
   }
 
-  setMonitorMode(mode, store = true) {
-    if (!['img', 'live', 'video'].includes(mode)) mode = 'img';
-    if (mode === 'live' && !this.liveCapAvailable) {
-      const reason = this.liveCapError || 'live capture unavailable';
-      this.showToast(`LIVE unavailable (${reason})`, 3500);
-      mode = 'img';
-    }
-    this.monitorMode = mode;
-    if (store) {
-      try { localStorage.setItem('vmix_monitor_mode_v2', mode); } catch {}
-      this._monitorPrefStored = true;
-    }
-    this.liveFallbackToasted = false;
-    this.applyMonitorMode();
-    this.vibrate();
-  }
-
-  onLiveStreamError() {
-    if (this.monitorMode !== 'live' || this.liveFallbackToasted) return;
-    this.liveFallbackToasted = true;
-    const reason = this.liveCapError || 'live capture stopped';
-    this.showToast(`LIVE unavailable (${reason}) — showing snapshots`, 3500);
-    // Fall back WITHOUT storing: no explicit choice was overridden, so the
-    // app rejoins LIVE by itself when capture comes back.
-    this.monitorMode = 'img';
-    this._monitorPrefStored = false;
-    try { localStorage.removeItem('vmix_monitor_mode_v2'); } catch {}
-    this.applyMonitorMode();
-  }
-
-  // Per-input live tiles (sliced from the MultiView capture). Resolves the
-  // best motion source for any input: its own tile stream when learned,
-  // else '' (caller falls back to snapshots / fullscreen-program capture).
-  liveInputFor(num) {
-    if (!this.currentState || !this.currentState.allInputs) return null;
-    const s = String(num);
-    return this.currentState.allInputs.find(i => String(i.number) === s || String(i.key) === s) || null;
-  }
-
-  liveStreamUrlFor(num, w = 960, fps = 25) {
-    const inp = this.liveInputFor(num);
-    if (inp && inp.liveTile) return API.getLiveInputUrl(inp.number, w, fps);
-    return '';
-  }
-
-  programLiveUrl() {
-    const num = this.lastMonitoredActive || (this.currentState && this.currentState.active);
-    const tile = num ? this.liveStreamUrlFor(num, 960, 25) : '';
-    if (tile) return tile;
-    return (this.monitorMode === 'live' && this.liveCapAvailable) ? API.getLiveStreamUrl() : '';
-  }
-
-  // Preview monitor prefers its input's live tile whenever learned
-  // (Preview has no LiveLAN equivalent, so this is a strict upgrade).
-  syncPreviewLive() {
-    const st = this.currentState;
-    const active = st && st.allInputs ? st.allInputs.find(i => i.isPreview) : null;
-    const num = active ? active.number : (st ? st.preview : null);
-    const url = num ? this.liveStreamUrlFor(num, 640, 15) : '';
-    const show = Boolean(url) && this.showThumbnails;
-    this._prvLiveActive = show;
-    const mjpeg = this.dom.prvLiveMjpeg;
-    const snap = this.dom.prvMonitorImg;
-    if (mjpeg) {
-      mjpeg.classList.toggle('hidden', !show);
-      if (show && this._lastPrvMjpegUrl !== url) mjpeg.setAttribute('src', url);
-      else if (!show) mjpeg.removeAttribute('src');
-    }
-    if (snap) snap.classList.toggle('hidden', show);
-    this._lastPrvMjpegUrl = show ? url : '';
-  }
-
-  applyMonitorMode() {
-    const mode = this.monitorMode || 'img';
-    const liveUrl = (mode === 'live') ? this.programLiveUrl() : '';
-    const videoUrl = (mode === 'video') ? this.resolveLiveLanUrl() : '';
-    const showLive = Boolean(liveUrl);
-    const showVideo = mode === 'video' && Boolean(videoUrl);
-
+  applyLiveVideo() {
+    const url = this.liveVideo ? this.resolveLiveLanUrl() : '';
     [this.dom.pgmVideoToggle, this.dom.mvVideoToggle].forEach(btn => {
       if (!btn) return;
-      btn.classList.toggle('active', mode !== 'img');
-      btn.textContent = mode.toUpperCase();
-      btn.title = 'Cycle monitor mode: '
-        + (mode === 'img' ? 'snapshots (current) → LIVE stream → delayed VIDEO'
-          : mode === 'live' ? 'LIVE stream (current) → delayed VIDEO → snapshots'
-          : 'delayed VIDEO (current) → snapshots → LIVE stream');
+      btn.classList.toggle('active', this.liveVideo);
+      btn.textContent = this.liveVideo ? 'VIDEO' : 'IMG';
+      btn.title = this.liveVideo
+        ? 'True motion video via LiveLAN (~10s delay). Click for snapshots.'
+        : 'Snapshots from vMix. Click for true motion video (needs LiveLAN started in vMix).';
     });
-
-    // Program surfaces run exactly one layer: snapshot img | MJPEG | LiveLAN.
-    [[this.dom.pgmMonitorImg, this.dom.pgmLiveMjpeg, this.dom.pgmLiveFrame],
-     [this.dom.mvPgmImg, this.dom.mvLiveMjpeg, this.dom.mvLiveFrame]].forEach(([img, mjpeg, frame]) => {
-      if (img) img.classList.toggle('hidden', showLive || showVideo);
-      if (mjpeg) {
-        mjpeg.classList.toggle('hidden', !showLive);
-        if (showLive && this.lastMjpegUrl !== liveUrl) {
-          mjpeg.setAttribute('src', liveUrl);
-        } else if (!showLive) {
-          mjpeg.removeAttribute('src');
-        }
-      }
+    // Swap snapshot <img> for the LiveLAN <iframe> on Program surfaces only.
+    // Preview stays on snapshots (LiveLAN carries Program output).
+    const showVideo = this.liveVideo && Boolean(url);
+    [[this.dom.pgmMonitorImg, this.dom.pgmLiveFrame],
+     [this.dom.mvPgmImg, this.dom.mvLiveFrame]].forEach(([img, frame]) => {
+      if (img) img.classList.toggle('hidden', showVideo);
       if (frame) {
         frame.classList.toggle('hidden', !showVideo);
-        if (showVideo && frame.getAttribute('src') !== videoUrl) {
-          frame.setAttribute('src', videoUrl);
-        } else if (!showVideo) {
-          frame.removeAttribute('src');
+        if (showVideo && this.lastLiveFrameUrl !== url) {
+          frame.setAttribute('src', url);
         }
       }
     });
-    if (showLive) {
-      this.lastMjpegUrl = liveUrl;
-      this.startLiveStatusPoll();
-    } else {
-      this.lastMjpegUrl = '';
-      this.stopLiveStatusPoll();
+    if (showVideo) {
+      this.lastLiveFrameUrl = url;
+    } else if (!this.liveVideo) {
+      // Unload the stream when leaving video mode so weak Wi-Fi gets relief.
+      [this.dom.pgmLiveFrame, this.dom.mvLiveFrame].forEach(frame => {
+        if (frame) frame.removeAttribute('src');
+      });
+      this.lastLiveFrameUrl = '';
     }
-    // Program pill + corner pill reflect the active layer (see below).
-    if (this.currentState) this.updateMonitorModePills();
+    // Program pill + corner pill read VIDEO while the stream is up.
+    if (this.currentState) this.updateVideoPills();
   }
 
-  startLiveStatusPoll() {
-    this.stopLiveStatusPoll();
-    const tick = async () => {
-      if (this.monitorMode !== 'live') return;
-      try {
-        const st = await API.getLiveStatus();
-        if (!st || st.available === false || st.running === false) {
-          this.liveCapError = (st && st.error) || 'live capture stopped';
-          this.liveCapAvailable = false;
-          this.onLiveStreamError();
-          return;
-        }
-        if (typeof st.fpsActual === 'number' && st.fpsActual > 0) {
-          this.liveCapFps = Math.round(st.fpsActual);
-        }
-        if (this.currentState) this.updateMonitorModePills();
-      } catch {}
+  updateVideoPills() {
+    if (!this.liveVideo || !this.lastLiveFrameUrl) return;
+    const mark = (el) => {
+      if (!el) return;
+      if (el.textContent !== 'VIDEO:DELAY') el.textContent = 'VIDEO:DELAY';
+      if (el.className !== 'thumb-mode-pill is-live') el.className = 'thumb-mode-pill is-live';
+      const tip = 'True motion video via LiveLAN (~10s behind live). Tally lights stay instant.';
+      if (el.title !== tip) el.title = tip;
     };
-    tick();
-    this.liveStatusTimer = setInterval(tick, 5000);
-  }
-
-  stopLiveStatusPoll() {
-    if (this.liveStatusTimer) {
-      clearInterval(this.liveStatusTimer);
-      this.liveStatusTimer = null;
-    }
-  }
-
-  updateMonitorModePills() {
-    const mode = this.monitorMode || 'img';
-    if (mode === 'video') {
-      const mark = (el) => {
-        if (!el) return;
-        if (el.textContent !== 'VIDEO:DELAY') el.textContent = 'VIDEO:DELAY';
-        if (el.className !== 'thumb-mode-pill is-live') el.className = 'thumb-mode-pill is-live';
-        const tip = 'Delayed video via LiveLAN (~10s behind live). Tally lights stay instant.';
-        if (el.title !== tip) el.title = tip;
-      };
-      mark(this.dom.pgmThumbMode);
-      mark(this.dom.mvThumbMode);
-      return;
-    }
-    if (mode === 'live') {
-      const fps = this.liveCapFps || 25;
-      const mark = (el) => {
-        if (!el) return;
-        const text = `LIVE:${fps}FPS`;
-        if (el.textContent !== text) el.textContent = text;
-        if (el.className !== 'thumb-mode-pill is-live') el.className = 'thumb-mode-pill is-live';
-        const tip = `Live Program stream at ~${fps} fps, sub-second delay.`;
-        if (el.title !== tip) el.title = tip;
-      };
-      mark(this.dom.pgmThumbMode);
-      mark(this.dom.mvThumbMode);
-    }
+    mark(this.dom.pgmThumbMode);
+    mark(this.dom.mvThumbMode);
   }
 
   setConnectionStatus(status, text) {
@@ -1313,61 +1126,26 @@ class SwitcherApp {
     this.dom.prvNumber.textContent = previewNum || '--';
     this.dom.prvName.textContent = previewTitle;
 
-    // LiveLAN URL + vMix host/port sync (server is the source of truth so
-    // the whole crew shares one video setting). Re-apply monitor layers on
-    // change. LiveLAN prefers the configured vMix host when it is a LAN
-    // address, so it also works when this switcher runs off-box.
-    let monitorLayersDirty = false;
+    // LiveLAN URL + vMix port sync (server is the source of truth so the
+    // whole crew shares one video setting). Re-apply video iframes on change.
     if (typeof state.livelanUrl === 'string' && state.livelanUrl !== this.livelanUrl) {
       this.livelanUrl = state.livelanUrl;
-      monitorLayersDirty = true;
+      this.lastLiveFrameUrl = '';
+      if (this.liveVideo) this.applyLiveVideo();
     }
     if (state.vmixPort && state.vmixPort !== this.vmixPort) {
       this.vmixPort = state.vmixPort;
-      monitorLayersDirty = true;
-    }
-    if (typeof state.vmixHost === 'string' && state.vmixHost !== this.vmixHost) {
-      this.vmixHost = state.vmixHost;
-      monitorLayersDirty = true;
-    }
-    const liveAvail = Boolean(state.liveCapAvailable);
-    if (liveAvail !== this.liveCapAvailable) {
-      this.liveCapAvailable = liveAvail;
-      this.liveCapError = state.liveCapError || '';
-      if (!liveAvail) {
-        if (this.monitorMode === 'live') {
-          this.onLiveStreamError();
-        } else {
-          monitorLayersDirty = true;
-        }
-      } else if (!this._monitorPrefStored && this.monitorMode !== 'live') {
-        // No explicit choice on this device yet: take the real-time feed
-        // by itself instead of sitting on the snapshot slideshow.
-        this.setMonitorMode('live');
-        this.showToast('LIVE stream on — real-time Program', 2500);
-      } else {
-        monitorLayersDirty = true;
-      }
-    }
-    if (this.monitorMode === 'live' && !this.liveCapAvailable) {
-      // Stored 'live' pref the server cannot honor (or first state before
-      // capture reported): never sit on a dead LIVE label.
-      this.onLiveStreamError();
-    } else if (typeof state.liveCapFps === 'number' && state.liveCapFps !== this.liveCapFps
-               && this.monitorMode !== 'live') {
-      this.liveCapFps = state.liveCapFps;
-    }
-    if (monitorLayersDirty && (this.monitorMode === 'live' || this.monitorMode === 'video')) {
-      this.applyMonitorMode();
+      this.lastLiveFrameUrl = '';
+      if (this.liveVideo && !this.livelanUrl) this.applyLiveVideo();
     }
 
     // Snapshot pills per monitor: each pill reports the snapshot status of
     // the input actually shown there (a placeholder must never read IMG:LIVE).
-    // LIVE / VIDEO layers override Program pills (see below).
+    // LiveLAN true-motion video still overrides Program pills (see below).
     this.updateMonitorPill(this.dom.pgmThumbMode, activeInput, state);
     this.updateMonitorPill(this.dom.prvThumbMode, previewInput, state);
     this.updateMonitorPill(this.dom.mvThumbMode, activeInput, state);
-    this.updateMonitorModePills();
+    this.updateVideoPills();
 
     // Update Live Monitor Images — steady-state refresh is owned by the
     // thumbnail interval loop (with visibility + load gating). Here we only
@@ -1377,7 +1155,7 @@ class SwitcherApp {
     // Retarget a monitor img to a new input: abort any in-flight fetch for the
     // old input (its bytes must never land here) and pull the new one now.
     const now = Date.now();
-    const pgmSnapshots = (this.monitorMode === 'img');
+    const pgmSnapshots = !this.liveVideo;
     const retarget = (img, num, force) => {
       if (!img) return;
       try { if (img._thumbAbort) img._thumbAbort.abort(); } catch {}
@@ -1396,20 +1174,12 @@ class SwitcherApp {
     }
     if (previewNum !== this.lastMonitoredPreview) {
       this.lastMonitoredPreview = previewNum;
-      [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => retarget(img, previewNum, !this._prvLiveActive));
+      [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => retarget(img, previewNum, true));
     } else {
       [this.dom.prvMonitorImg, this.dom.mvPrvImg].forEach(img => {
         if (img && !img.getAttribute('data-thumb-input')) img.setAttribute('data-thumb-input', previewNum);
       });
     }
-    // Program layer follows the routed input in live/video modes (tile URL
-    // embeds the input number, so re-apply on change).
-    if ((this.monitorMode === 'live' || this.monitorMode === 'video') && activeNum !== this._lastAppliedActive) {
-      this._lastAppliedActive = activeNum;
-      this.applyMonitorMode();
-    }
-    // Preview prefers its input's live tile whenever one is learned.
-    this.syncPreviewLive();
     if (this.dom.mvPgmTitle) this.dom.mvPgmTitle.textContent = activeTitle;
     if (this.dom.mvPrvTitle) this.dom.mvPrvTitle.textContent = previewTitle;
     if (this.dom.mvPgmNum) this.dom.mvPgmNum.textContent = activeNum || '--';
@@ -1499,16 +1269,12 @@ class SwitcherApp {
     const existingCards = this.dom.sourcesGrid.querySelectorAll('.source-card');
     const existingNums = Array.from(existingCards).map(c => c.getAttribute('data-input'));
     const newNums = inputs.map(i => String(i.number));
-    // A liveTile flip changes the <img> plumbing (stream vs poll): rebuild.
-    const liveKey = (inputs || []).map(i => `${i.number}:${i.liveTile ? 1 : 0}`).join(',');
 
     const canUpdateInPlace = !forceRebuild &&
       existingNums.length === newNums.length &&
-      existingNums.every((val, idx) => val === newNums[idx]) &&
-      liveKey === this._gridLiveKey;
+      existingNums.every((val, idx) => val === newNums[idx]);
 
     if (canUpdateInPlace) {
-      this._gridLiveKey = liveKey;
       existingCards.forEach((card, idx) => {
         const inp = inputs[idx];
         const isPriority = this.isPriorityInput(inp);
@@ -1588,20 +1354,12 @@ class SwitcherApp {
 
       const showBadge = inp.isLiveSource || isPriority;
       const badgeLabel = isPriority ? `★ ${this.feedBadgeLabel(inp)}` : this.feedBadgeLabel(inp);
-      // Live tiles stream themselves (no snapshot polling); everything else
-      // keeps today's snapshot path. Toggle off hides both and saves bandwidth.
-      const liveTile = Boolean(inp.liveTile) && this.showThumbnails;
-      const thumbHtml = liveTile ? `
-        <div class="source-thumb-container">
-          <img class="source-thumb-img" data-live-input="${inp.number}" src="${API.getLiveInputUrl(inp.number, 384, 10)}" alt="" loading="lazy">
-          ${showBadge ? `<span class="live-feed-badge ${isPriority ? 'is-priority-feed' : ''} type-${typeLower}"><span class="live-signal-dot ${signalLive ? 'live' : ''}"></span>${this.escapeHtml(badgeLabel)}</span>` : ''}
-        </div>
-      ` : (this.showThumbnails ? `
+      const thumbHtml = this.showThumbnails ? `
         <div class="source-thumb-container">
           <img class="source-thumb-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">
           ${showBadge ? `<span class="live-feed-badge ${isPriority ? 'is-priority-feed' : ''} type-${typeLower}"><span class="live-signal-dot ${signalLive ? 'live' : ''}"></span>${this.escapeHtml(badgeLabel)}</span>` : ''}
         </div>
-      ` : '');
+      ` : '';
 
       card.innerHTML = `
         <div class="source-card-header">
@@ -1643,7 +1401,6 @@ class SwitcherApp {
     this.dom.sourcesGrid.querySelectorAll('img').forEach(img => this.revokeImgBlob(img));
     this.dom.sourcesGrid.innerHTML = '';
     this.dom.sourcesGrid.appendChild(fragment);
-    this._gridLiveKey = liveKey;
   }
 
   // Handle clicking a source button
@@ -1840,7 +1597,7 @@ class SwitcherApp {
     return input.signalStatus === 'live' ? 'SIGNAL LIVE' : 'STANDBY';
   }
 
-  renderMultiviewGrid(inputs, forceRebuild = false) {
+  renderMultiviewGrid(inputs) {
     if (!this.dom.multiviewCamsGrid) return;
     if (!inputs || inputs.length === 0) {
       this.dom.multiviewCamsGrid.innerHTML = `
@@ -1854,14 +1611,11 @@ class SwitcherApp {
     const existingTiles = this.dom.multiviewCamsGrid.querySelectorAll('.multiview-cam-tile');
     const existingNums = Array.from(existingTiles).map(t => t.getAttribute('data-mv-input'));
     const newNums = inputs.map(i => String(i.number));
-    const mvLiveKey = (inputs || []).map(i => `${i.number}:${i.liveTile ? 1 : 0}`).join(',');
 
-    const canUpdateInPlace = !forceRebuild && existingNums.length === newNums.length &&
-      existingNums.every((val, idx) => val === newNums[idx]) &&
-      mvLiveKey === this._mvLiveKey;
+    const canUpdateInPlace = existingNums.length === newNums.length &&
+      existingNums.every((val, idx) => val === newNums[idx]);
 
     if (canUpdateInPlace) {
-      this._mvLiveKey = mvLiveKey;
       existingTiles.forEach((tile, idx) => {
         const inp = inputs[idx];
         const isPriority = this.isPriorityInput(inp);
@@ -1919,15 +1673,8 @@ class SwitcherApp {
       const statusText = this.getMultiviewSignalLabel(inp);
       const signalClass = isReceiving ? 'feed-live' : 'feed-standby';
 
-      const liveTile = Boolean(inp.liveTile) && this.showThumbnails;
-      const mvImg = liveTile
-        ? `<img class="mv-cam-img" data-live-input="${inp.number}" src="${API.getLiveInputUrl(inp.number, 384, 10)}" alt="" loading="lazy">`
-        : (this.showThumbnails
-          ? `<img class="mv-cam-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">`
-          : '');
-
       tile.innerHTML = `
-        ${mvImg}
+        <img class="mv-cam-img" data-thumb-input="${inp.number}" src="${API.getThumbnailUrl(inp.number)}" alt="" loading="lazy">
         <span class="mv-cam-badge type-${typeLower}">${liveDot}${badgeLabel}</span>
         <span class="mv-cam-status-pill ${inp.isActive ? 'live' : (inp.isPreview ? 'prv' : (inp.isLiveSource ? signalClass : ''))}">${statusText}</span>
         <div class="mv-cam-take-action">
@@ -1959,7 +1706,6 @@ class SwitcherApp {
     this.dom.multiviewCamsGrid.querySelectorAll('img').forEach(img => this.revokeImgBlob(img));
     this.dom.multiviewCamsGrid.innerHTML = '';
     this.dom.multiviewCamsGrid.appendChild(fragment);
-    this._mvLiveKey = mvLiveKey;
   }
 
   // ---- Priority tier (operator picks, per-venue cap) ----
@@ -2250,13 +1996,6 @@ class SwitcherApp {
         this.dom.settingLivelanUrl.value = cfg.livelanUrl || '';
         this.dom.settingLivelanUrl.placeholder = `Auto: http://${window.location.hostname}:${cfg.vmixPort || 8088}/livelan`;
       }
-      if (this.dom.settingLivecapEnabled) {
-        this.dom.settingLivecapEnabled.checked = cfg.liveCapEnabled !== false;
-      }
-      if (this.dom.settingLivecapFps) {
-        this.dom.settingLivecapFps.value = String(cfg.liveCapFps || 25);
-      }
-      this.loadLivecapPreview();
       this.dom.settingNewPassword.value = '';
 
       // Load network IPs
@@ -2268,48 +2007,6 @@ class SwitcherApp {
 
   closeSettingsModal() {
     this.dom.settingsModal.classList.add('hidden');
-  }
-
-  async loadLivecapPreview() {
-    // Aim check: show exactly what the chosen display currently feeds LIVE.
-    // A mirrored settings page here means the capture points at the browser.
-    try {
-      if (this.dom.settingLivecapPreview) {
-        const bust = Date.now();
-        this.dom.settingLivecapPreview.src = `${API.getLiveStillUrl()}&t=${bust}`;
-      }
-      const st = await API.getLiveStatus();
-      if (this.dom.settingLivecapMonitors && st) {
-        const n = st.monitorCount ?? '?';
-        const fps = st.fpsActual || st.fpsTarget || '?';
-        let aim;
-        if (st.autoIdx !== null && st.autoIdx !== undefined && (st.autoFreshSec || 0) > 0) {
-          aim = `Program found on display ${st.autoIdx} (${st.autoScore})`;
-        } else if (!st.available) {
-          aim = st.error || 'capture unavailable';
-        } else {
-          aim = 'no display matches Program yet — enable vMix fullscreen output';
-        }
-        this.dom.settingLivecapMonitors.textContent =
-          `${n} display(s) • showing display ${st.monitorUsed ?? '?'} • ${aim} • ${fps} fps`;
-      }
-    } catch {}
-  }
-
-  async rescanLiveProgram() {
-    this.vibrate();
-    this.showToast('Scanning displays for Program…', 2000);
-    try {
-      const res = await API.rescanLive();
-      if (res && res.ok) {
-        this.showToast(`Locked onto display ${res.bestIdx} (match ${res.bestScore})`, 3000);
-      } else {
-        this.showToast((res && res.error) || 'No Program display found', 4000);
-      }
-    } catch (err) {
-      this.showToast(err.message || 'Rescan failed', 3500);
-    }
-    this.loadLivecapPreview();
   }
 
   async loadNetworkIps() {
@@ -2368,13 +2065,6 @@ class SwitcherApp {
 
     if (this.dom.settingLivelanUrl) {
       updates.livelanUrl = this.dom.settingLivelanUrl.value.trim();
-    }
-
-    if (this.dom.settingLivecapEnabled) {
-      updates.liveCapEnabled = this.dom.settingLivecapEnabled.checked;
-    }
-    if (this.dom.settingLivecapFps) {
-      updates.liveCapFps = parseInt(this.dom.settingLivecapFps.value, 10);
     }
 
     if (this.dom.settingShowThumbnails) {

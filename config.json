@@ -15,12 +15,12 @@
   "priorityInputs": [],
   "maxPriorityInputs": 20,
   "livelanUrl": "",
+  "mockMode": false,
+  "authTokenSecret": "c27216241fb0456871804b6d0543ff0652092f4dde4984f3",
   "liveCapEnabled": true,
   "liveCapAuto": true,
   "liveCapMonitor": 1,
   "liveCapFps": 25,
   "liveCapWidth": 960,
-  "liveCapQuality": 70,
-  "mockMode": false,
-  "authTokenSecret": "c27216241fb0456871804b6d0543ff0652092f4dde4984f3"
+  "liveCapQuality": 70
 }

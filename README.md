@@ -7,8 +7,7 @@ A modern, high-contrast, responsive web switcher for **vMix live video productio
 - 🔴 **Interactive Broadcast Controls**: Clickable **REC** (with live timer), **STREAM**, **EXT** (External output), and **FULLSCREEN**
 - 🎤 **Dedicated Mic & Audio Console**: Tactical Mute/Live toggles, volume fader sliders (0-100%), and animated VU peak meters
 - 🖥️ **Big Screen Preview (Multiviewer)**: Fullscreen-ready production multiviewer with giant twin 16:9 displays, live clock, and multi-camera grid
-- 🎥 **True-motion Program video (LiveLAN)**: Flip Program monitors from snapshots to real motion video streamed straight from the vMix PC (IMG ⇄ LIVE ⇄ VIDEO toggle, tally stays instant)
-- ⚡ **Live Program stream (LIVE)**: Sub-second ~25 fps Program video captured on the vMix PC and served from this same single binary — no extra software, no extra setup beyond running on the vMix PC
+- 🎥 **True-motion Program video (LiveLAN)**: Flip Program monitors from snapshots to real motion video streamed straight from the vMix PC (IMG ⇄ VIDEO toggle, ~10s delay, tally stays instant)
 - 👁️ Hide auxiliary inputs (audio, overlays, test patterns) without touching vMix
 - 📱 Touch-optimized with haptics + click sounds, ⌨️ shortcuts (`1`–`9`, `Space`, `Enter`)
 - 🔄 Real-time sync across all crew devices via WebSocket
@@ -147,13 +146,6 @@ Snapshots are great for the grid, but motion needs video. vMix's built-in **Live
 2. In this app: tap **IMG** on the Program monitor (or corner hero) → it flips to **VIDEO**. Leave *LiveLAN Video URL* blank to auto-derive it per device, or paste the View Stream URL in Settings ⚙️ to pin it for the whole crew.
 3. Notes: ~10s behind live (tally lights stay instant — trust the red/green, not the video frame); tablets load it straight from the vMix PC so it works even when the switcher runs elsewhere; needs port `8088` reachable (same firewall note as below).
 
-### ⚡ Live sources everywhere (LIVE tiles + monitors — sub-second, same binary)
-Snapshots update ~1 frame/sec shared, so they can't show motion. The fix: vMix paints **every input onto one screen at once** (MultiView), the app captures that screen at ~25 fps and slices it back into a live tile per source. Every tile, the Preview monitor and the Program monitor all move in real time — so you see each source's current state *before* you switch to it.
-1. Run this app **on the vMix PC** (LIVE is disabled with an honest reason anywhere else).
-2. In vMix, Settings → Outputs → Fullscreen → send **MultiView** to a second monitor (any grid size). Keep the browser on the main monitor.
-3. That's the whole setup — no display numbers, no picking. The app matches every display against the real input pictures, learns the grid layout by itself (re-checking every 30s and after each switch), and each tile flips live on its own. Tiles read smooth motion at ~10 fps, monitors at ~25 fps; tally stays instant as always.
-4. No MultiView display found? Program-fullscreen is used as fallback (Program live, rest snapshots), and snapshots cover anything unmatched. Settings shows what locked (layout, match score, tile count) plus an aim-check preview and a *Find Program display* rescan.
-
 ---
 
 ## 🔧 Configuration
@@ -174,12 +166,6 @@ Settings persist in `config.json`:
 | `priorityInputs` | `[]` | Starred inputs (numbers or keys) on the fast tier — pick via ★ on cards or Manage Sources |
 | `maxPriorityInputs` | `20` | Cap for the priority list (1–50). Each venue sizes its fast tier in Settings ⚙️ |
 | `livelanUrl` | `""` (auto) | Explicit LiveLAN page URL for true-motion Program video. Blank = auto-derive per device from page host + `vmixPort` |
-| `liveCapEnabled` | `true` | Master switch for the LIVE low-latency Program stream (server must run on the vMix PC) |
-| `liveCapAuto` | `true` | Auto-aim: find the Program display by matching pictures (no manual aiming) |
-| `liveCapMonitor` | `1` | Fallback display when auto-aim finds no match (`0` = full virtual desktop) |
-| `liveCapFps` | `25` | LIVE capture + stream rate (5–30 fps) |
-| `liveCapWidth` | `960` | LIVE output width in px, aspect kept (320–1920) |
-| `liveCapQuality` | `70` | LIVE JPEG quality (40–90) |
 | `mockMode` | `false` | Simulator when vMix is offline |
 
 ---
@@ -222,7 +208,6 @@ Then check the **Actions** tab → **Build Release Binaries** → once green, th
 | Want a fresh password/secret | Settings ⚙️ → change password (min 3 chars). |
 | vMix pops up "A generic error occurred in GDI+" | Update to v1.3.3+: snapshots are one-at-a-time with auto-pause on errors. Immediate relief: Settings → uncheck *Show Live Video Thumbnails* (stops all snapshot requests). |
 | VIDEO monitor is black / won't load | LiveLAN not started in vMix (Stream cog → LiveLAN → Start)? Tablet on same LAN? Port `8088` allowed through the vMix PC firewall? Try opening the LiveLAN URL directly in the tablet browser — if that fails, the app can't embed it either. |
-| LIVE says unavailable / falls back to IMG | By design LIVE only runs on the vMix PC (remote servers report the reason instead of a wrong feed). On the vMix PC: enable it in Settings ⚙️ → *Live Program stream*, and check the pill tooltip for the exact reason. |
 
 ---
 

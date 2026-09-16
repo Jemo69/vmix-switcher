@@ -183,32 +183,6 @@ const API = {
     return `/api/vmix/stream/${encodeURIComponent(input)}.mjpg?token=${encodeURIComponent(token)}`;
   },
 
-  getLiveStreamUrl() {
-    const token = this.getToken() || '';
-    return `/api/vmix/live/program.mjpg?token=${encodeURIComponent(token)}`;
-  },
-
-  getLiveInputUrl(input, w, fps) {
-    const token = this.getToken() || '';
-    let url = `/api/vmix/live/input/${encodeURIComponent(input)}.mjpg?token=${encodeURIComponent(token)}`;
-    if (w) url += `&w=${encodeURIComponent(w)}`;
-    if (fps) url += `&fps=${encodeURIComponent(fps)}`;
-    return url;
-  },
-
-  getLiveStillUrl() {
-    const token = this.getToken() || '';
-    return `/api/vmix/live/program.jpg?token=${encodeURIComponent(token)}`;
-  },
-
-  async getLiveStatus() {
-    return this.request('/api/vmix/live/status');
-  },
-
-  async rescanLive() {
-    return this.request('/api/vmix/live/rescan', { method: 'POST' });
-  },
-
   // Configuration
   async getConfig() {
     return this.request('/api/config');

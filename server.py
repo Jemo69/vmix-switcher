@@ -5,7 +5,7 @@ import os
 import socket
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,14 +15,6 @@ from pydantic import BaseModel
 
 from vmix.client import vmix_client
 from vmix.config import config_manager
-from vmix.livecap import (
-    clamp_fps,
-    clamp_monitor,
-    clamp_quality,
-    clamp_width,
-    live_capture,
-)
-from vmix.livemulti import MON_FPS, MON_Q, MON_W, TILE_FPS, TILE_Q, TILE_W, tile_state
 
 # Token Authentication
 def generate_token(password: str) -> str:
@@ -106,10 +98,6 @@ async def lifespan(app: FastAPI):
     vmix_client.start()
     yield
     vmix_client.stop()
-    try:
-        live_capture.stop("server stopping")
-    except Exception:
-        pass
 
 app = FastAPI(title="vMix Web Switcher", lifespan=lifespan)
 
@@ -169,12 +157,6 @@ class ConfigUpdateRequest(BaseModel):
     backgroundFps: Optional[float] = None
     maxPriorityInputs: Optional[int] = None
     livelanUrl: Optional[str] = None
-    liveCapEnabled: Optional[bool] = None
-    liveCapAuto: Optional[bool] = None
-    liveCapMonitor: Optional[int] = None
-    liveCapFps: Optional[int] = None
-    liveCapWidth: Optional[int] = None
-    liveCapQuality: Optional[int] = None
     mockMode: Optional[bool] = None
     newPassword: Optional[str] = None
 
@@ -296,140 +278,6 @@ async def stream_mjpeg(input_id: str, _: bool = Depends(require_auth)):
                 break
             except Exception:
                 pass
-            await asyncio.sleep(interval)
-
-    return StreamingResponse(
-        frame_generator(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
-    )
-
-# Low-latency live Program capture (same binary, no external services).
-# Runs only when this server is ON the vMix PC (see _livecap_ensure);
-# otherwise these report/serve honest unavailability instead of a wrong feed.
-@app.get("/api/vmix/live/status")
-async def live_status(_: bool = Depends(require_auth)):
-    ensured = vmix_client._livecap_ensure()
-    st = live_capture.status()
-    st["available"] = bool(ensured.get("available", False))
-    if ensured.get("error") and not st.get("error"):
-        st["error"] = ensured.get("error")
-    return st
-
-@app.get("/api/vmix/live/program.jpg")
-async def live_program_jpg(_: bool = Depends(require_auth)):
-    ensured = vmix_client._livecap_ensure()
-    frame, _ts = live_capture.latest()
-    if frame and ensured.get("available"):
-        return Response(
-            content=frame,
-            media_type="image/jpeg",
-            headers={"Cache-Control": "no-store"},
-        )
-    reason = str(ensured.get("error") or "live capture unavailable")
-    return Response(
-        content=live_capture.placeholder(reason),
-        media_type="image/jpeg",
-        headers={"Cache-Control": "no-store"},
-    )
-
-@app.post("/api/vmix/live/rescan")
-async def live_program_rescan(_: bool = Depends(require_auth)):
-    """Re-aim LIVE at the Program display right now (Settings button)."""
-    return await vmix_client.livecap_rescan()
-
-@app.get("/api/vmix/live/program.mjpg")
-async def live_program_mjpg(_: bool = Depends(require_auth)):
-    async def frame_generator():
-        idle_since = time.time()
-        while True:
-            ensured = vmix_client._livecap_ensure()
-            if not ensured.get("available"):
-                break
-            frame, _ts = live_capture.latest()
-            if frame:
-                idle_since = time.time()
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n"
-                    b"Content-Length: " + str(len(frame)).encode("latin1") + b"\r\n\r\n"
-                    + frame + b"\r\n"
-                )
-            elif time.time() - idle_since > 8.0:
-                # Capturer died mid-stream: end it so the UI can fall back
-                # to snapshots instead of holding a frozen "live" picture.
-                break
-            try:
-                fps = max(1, int(ensured.get("fps") or 25))
-            except (TypeError, ValueError):
-                fps = 25
-            await asyncio.sleep(max(0.033, 1.0 / fps))
-
-    return StreamingResponse(
-        frame_generator(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
-    )
-
-def _tile_params(w: Any = None, fps: Any = None, q: Any = None) -> Tuple[int, float, int]:
-    try:
-        width = min(960, max(96, int(w or TILE_W)))
-    except (TypeError, ValueError):
-        width = TILE_W
-    try:
-        rate = min(25.0, max(2.0, float(fps or TILE_FPS)))
-    except (TypeError, ValueError):
-        rate = float(TILE_FPS)
-    try:
-        quality = min(90, max(40, int(q or TILE_Q)))
-    except (TypeError, ValueError):
-        quality = TILE_Q
-    return width, rate, quality
-
-# Per-input live tiles sliced from the MultiView capture. Only served for
-# inputs the layout learner assigned a cell; anything else gets the honest
-# placeholder (frontend falls back to snapshots via the liveTile flag).
-@app.get("/api/vmix/live/input/{input_key}.jpg")
-async def live_input_jpg(input_key: str, _: bool = Depends(require_auth),
-                         w: Any = None, q: Any = None):
-    width, _rate, quality = _tile_params(w, None, q)
-    frame, ts = live_capture.latest()
-    if frame and tile_state.has(input_key):
-        tile = await asyncio.to_thread(tile_state.crop, frame, ts, input_key, width, quality)
-        if tile:
-            return Response(content=tile, media_type="image/jpeg",
-                            headers={"Cache-Control": "no-store"})
-    ensured = vmix_client._livecap_ensure()
-    return Response(content=live_capture.placeholder(str(ensured.get("error") or "no live tile")),
-                    media_type="image/jpeg", headers={"Cache-Control": "no-store"})
-
-@app.get("/api/vmix/live/input/{input_key}.mjpg")
-async def live_input_mjpg(input_key: str, _: bool = Depends(require_auth),
-                          w: Any = None, fps: Any = None, q: Any = None):
-    width, rate, quality = _tile_params(w, fps, q)
-    interval = 1.0 / rate
-
-    async def frame_generator():
-        idle_since = time.time()
-        while True:
-            if not tile_state.has(input_key):
-                break
-            frame, ts = live_capture.latest()
-            if frame:
-                tile = await asyncio.to_thread(
-                    tile_state.crop, frame, ts, input_key, width, quality)
-                if tile:
-                    idle_since = time.time()
-                    yield (
-                        b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n"
-                        b"Content-Length: " + str(len(tile)).encode("latin1") + b"\r\n\r\n"
-                        + tile + b"\r\n"
-                    )
-                elif time.time() - idle_since > 8.0:
-                    break
-            elif time.time() - idle_since > 8.0:
-                break
             await asyncio.sleep(interval)
 
     return StreamingResponse(
@@ -567,20 +415,6 @@ async def update_config(req: ConfigUpdateRequest, _: bool = Depends(require_auth
             pass
     if req.livelanUrl is not None:
         updates["livelanUrl"] = req.livelanUrl.strip()
-    if req.liveCapEnabled is not None:
-        updates["liveCapEnabled"] = bool(req.liveCapEnabled)
-    if req.liveCapAuto is not None:
-        updates["liveCapAuto"] = bool(req.liveCapAuto)
-        if bool(req.liveCapAuto):
-            live_capture.clear_auto()  # force a fresh aim on next poll
-    if req.liveCapMonitor is not None:
-        updates["liveCapMonitor"] = clamp_monitor(req.liveCapMonitor)
-    if req.liveCapFps is not None:
-        updates["liveCapFps"] = clamp_fps(req.liveCapFps)
-    if req.liveCapWidth is not None:
-        updates["liveCapWidth"] = clamp_width(req.liveCapWidth)
-    if req.liveCapQuality is not None:
-        updates["liveCapQuality"] = clamp_quality(req.liveCapQuality)
     if req.mockMode is not None:
         updates["mockMode"] = bool(req.mockMode)
     if req.newPassword and len(req.newPassword.strip()) >= 3:

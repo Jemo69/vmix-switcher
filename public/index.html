@@ -136,11 +136,10 @@
           <div class="tally-tag">
             <span class="live-dot-pulse"></span>
             <span>PROGRAM / LIVE (MAIN OUTPUT)</span>
-            <button type="button" id="pgm-video-toggle" class="monitor-video-toggle" title="Cycle monitor mode: snapshots (IMG) → live stream (LIVE) → delayed video (VIDEO)">IMG</button>
+            <button type="button" id="pgm-video-toggle" class="monitor-video-toggle" title="Toggle true motion video (LiveLAN, ~10s delay) vs snapshots">IMG</button>
           </div>
           <div class="monitor-screen-wrapper">
             <img id="pgm-monitor-img" class="monitor-screen-img" alt="Live Program Screen" />
-            <img id="pgm-live-mjpeg" class="monitor-live-mjpeg hidden" alt="Live Program stream" />
             <iframe id="pgm-live-frame" class="monitor-live-frame hidden" title="Live program video (LiveLAN)" allow="autoplay; fullscreen" allowfullscreen></iframe>
             <div class="monitor-overlay-info">
               <span class="tally-num" id="pgm-number">--</span>
@@ -199,7 +198,6 @@
           </div>
           <div class="monitor-screen-wrapper">
             <img id="prv-monitor-img" class="monitor-screen-img" alt="Live Preview Screen" />
-            <img id="prv-live-mjpeg" class="monitor-live-mjpeg hidden" alt="Live Preview stream" />
             <div class="monitor-overlay-info">
               <span class="tally-num" id="prv-number">--</span>
               <span class="tally-name" id="prv-name">No Preview Input</span>
@@ -305,12 +303,11 @@
                 <span class="corner-hero-tag">LIVE ON AIR (CURRENT OUTPUT)</span>
               </div>
               <span class="corner-hero-pill">ON AIR</span>
-              <button type="button" id="mv-video-toggle" class="monitor-video-toggle" title="Cycle monitor mode: snapshots (IMG) → live stream (LIVE) → delayed video (VIDEO)">IMG</button>
+              <button type="button" id="mv-video-toggle" class="monitor-video-toggle" title="Toggle true motion video (LiveLAN, ~10s delay) vs snapshots">IMG</button>
               <span class="thumb-mode-pill is-waiting" id="mv-thumb-mode" title="">IMG:LOAD</span>
             </div>
             <div class="corner-hero-canvas">
               <img id="mv-pgm-img" class="corner-hero-img" alt="Currently Live Program" />
-              <img id="mv-live-mjpeg" class="monitor-live-mjpeg hidden" alt="Live Program stream" />
               <iframe id="mv-live-frame" class="monitor-live-frame hidden" title="Live program video (LiveLAN)" allow="autoplay; fullscreen" allowfullscreen></iframe>
               <div class="corner-hero-footer">
                 <div class="corner-hero-meta">
@@ -513,49 +510,6 @@
               <label for="setting-livelan-url">LiveLAN Video URL (true motion on Program monitors)</label>
               <input type="text" id="setting-livelan-url" placeholder="Auto: http://this-device-host:8088/livelan">
               <small class="field-hint">Enable in vMix: Stream settings (cog) → Destination <strong>LiveLAN</strong> → Start → View Stream. Leave blank to auto-derive from this device's address. Tablets load it straight from the vMix PC, so it works even when the switcher runs elsewhere. Expect ~10s delay — tally lights stay instant.</small>
-            </div>
-
-            <div class="form-group form-group-spaced">
-              <label>Live Program stream (LIVE mode — real motion, sub-second delay)</label>
-              <div class="priority-settings-card">
-                <div class="form-group checkbox-group">
-                  <label class="toggle-switch">
-                    <input type="checkbox" id="setting-livecap-enabled">
-                    <span class="slider"></span>
-                  </label>
-                  <div class="toggle-label-group">
-                    <span class="toggle-title">Enable live capture</span>
-                    <span class="toggle-sub">Captures the vMix PC display at up to 30 fps. Needs this server running on the vMix PC.</span>
-                  </div>
-                </div>
-                <div class="form-row">
-                  <div class="form-group col-half">
-                    <label for="setting-livecap-fps">Stream rate</label>
-                    <select id="setting-livecap-fps">
-                      <option value="10">10 fps (light)</option>
-                      <option value="15">15 fps</option>
-                      <option value="25">25 fps (recommended)</option>
-                      <option value="30">30 fps (max)</option>
-                    </select>
-                  </div>
-                  <div class="form-group col-half">
-                    <label>Aiming</label>
-                    <div class="toolbar-actions">
-                      <button type="button" id="setting-livecap-rescan-btn" class="btn btn-secondary btn-sm">Find Program display</button>
-                    </div>
-                    <small class="field-hint">Auto-aim watches every display and locks onto Program by itself — no numbers to guess.</small>
-                  </div>
-                </div>
-                <div class="form-group">
-                  <label>Capture aim check <span id="setting-livecap-monitors" class="filter-indicator"></span></label>
-                  <img id="setting-livecap-preview" class="livecap-preview" alt="What the chosen display currently shows">
-                  <div class="toolbar-actions">
-                    <button type="button" id="setting-livecap-refresh-btn" class="btn btn-secondary btn-sm">Refresh aim check</button>
-                  </div>
-                  <small class="field-hint">If this preview shows the browser mirrored back, click <strong>Find Program display</strong> above — or enable vMix fullscreen Program output on a second display.</small>
-                </div>
-                <small class="field-hint">Tap the <strong>IMG</strong> button on the Program monitor to cycle IMG → LIVE → VIDEO. LIVE is current to a fraction of a second; VIDEO (LiveLAN) is smooth but ~10s behind.</small>
-              </div>
             </div>
           </div>
 
