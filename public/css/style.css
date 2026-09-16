@@ -1415,6 +1415,63 @@ select,
   gap: var(--s-3);
 }
 
+/* Outputs console cards: same hardware vocabulary as audio cards. */
+.output-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-3);
+}
+
+.output-status-pill {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.output-status-pill.on {
+  color: #fff;
+  background: var(--live-fill);
+  border-color: var(--live);
+}
+
+.output-btn-row {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.output-btn-row .search-input {
+  flex: 1;
+  min-width: 130px;
+}
+
+.output-rtmp-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.output-apply-col {
+  display: flex;
+  align-items: flex-end;
+}
+
+.output-note {
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+
 .audio-card {
   display: flex;
   flex-direction: column;

@@ -53,9 +53,13 @@ class SwitcherApp {
       tabSwitcher: document.getElementById('tab-switcher'),
       tabAudio: document.getElementById('tab-audio'),
       tabMultiview: document.getElementById('tab-multiview'),
+      tabOutputs: document.getElementById('tab-outputs'),
       viewSwitcher: document.getElementById('view-switcher'),
       viewAudio: document.getElementById('view-audio'),
       viewMultiview: document.getElementById('view-multiview'),
+      viewOutputs: document.getElementById('view-outputs'),
+      outputsGrid: document.getElementById('outputs-grid'),
+      outputsLiveCount: document.getElementById('outputs-live-count'),
 
       // Live Video Monitors & Method Switcher
       pgmMonitorImg: document.getElementById('pgm-monitor-img'),
@@ -184,6 +188,9 @@ class SwitcherApp {
     }
     if (this.dom.tabMultiview) {
       this.dom.tabMultiview.addEventListener('click', () => this.switchView('multiview'));
+    }
+    if (this.dom.tabOutputs) {
+      this.dom.tabOutputs.addEventListener('click', () => this.switchView('outputs'));
     }
 
     // Direct vs Preview + Take Switching Method Pills
@@ -541,16 +548,20 @@ class SwitcherApp {
     if (this.dom.tabSwitcher) this.dom.tabSwitcher.classList.toggle('active', view === 'switcher');
     if (this.dom.tabAudio) this.dom.tabAudio.classList.toggle('active', view === 'audio');
     if (this.dom.tabMultiview) this.dom.tabMultiview.classList.toggle('active', view === 'multiview');
+    if (this.dom.tabOutputs) this.dom.tabOutputs.classList.toggle('active', view === 'outputs');
 
     if (this.dom.viewSwitcher) this.dom.viewSwitcher.classList.toggle('hidden', view !== 'switcher');
     if (this.dom.viewAudio) this.dom.viewAudio.classList.toggle('hidden', view !== 'audio');
     if (this.dom.viewMultiview) this.dom.viewMultiview.classList.toggle('hidden', view !== 'multiview');
+    if (this.dom.viewOutputs) this.dom.viewOutputs.classList.toggle('hidden', view !== 'outputs');
 
     if (this.currentState) {
       if (view === 'audio') {
         this.renderAudioMixer(this.currentState.allInputs || []);
       } else if (view === 'multiview') {
         this.renderMultiviewGrid(this.currentState.visibleInputs || []);
+      } else if (view === 'outputs') {
+        this.renderOutputs(this.currentState);
       } else {
         this.renderSourcesGrid(this.currentState.visibleInputs || []);
       }
@@ -816,7 +827,7 @@ class SwitcherApp {
     this.thumbTimer = setInterval(() => {
       if (!this.showThumbnails || this.dom.appContainer.classList.contains('hidden')) return;
       if (document.hidden) return;
-      if (this.currentView === 'audio') return; // Pause thumbnail requests while in Audio view
+      if (this.currentView === 'audio' || this.currentView === 'outputs') return; // Pause thumbnail requests while in Audio/Outputs views
       this.resetStaleThumbFlags();
 
       const eachGrid = (selector, fn) => {
@@ -886,7 +897,7 @@ class SwitcherApp {
     this.ecoTimer = setInterval(() => {
       if (!this.showThumbnails || this.dom.appContainer.classList.contains('hidden')) return;
       if (document.hidden) return;
-      if (this.currentView === 'audio') return;
+      if (this.currentView === 'audio' || this.currentView === 'outputs') return;
 
       this.ecoTickCount = (this.ecoTickCount + 1) % 60;
       const isStaticTick = (this.ecoTickCount % 15 === 0);
@@ -1215,6 +1226,8 @@ class SwitcherApp {
       this.renderAudioMixer(state.allInputs || []);
     } else if (this.currentView === 'multiview') {
       this.renderMultiviewGrid(state.visibleInputs || []);
+    } else if (this.currentView === 'outputs') {
+      this.renderOutputs(state);
     } else {
       this.renderSourcesGrid(state.visibleInputs || []);
     }
@@ -1571,6 +1584,243 @@ class SwitcherApp {
           await API.executeFunction('AudioOn', { Input: inp.number });
         } catch {}
       }
+    }
+  }
+
+  // ==================== OUTPUTS CONSOLE (STREAM / RECORD / EXTERNAL / MULTICORDER) ====================
+  // Only real vMix API knobs live here. Anything vMix does not expose
+  // (stream provider/quality, record format/path, external device,
+  // multicorder inputs) is labeled vMix-only instead of faked.
+  renderOutputs(state) {
+    if (!this.dom.outputsGrid) return;
+    if (!this.dom.outputsGrid.dataset.built) {
+      this.dom.outputsGrid.dataset.built = '1';
+      this.dom.outputsGrid.innerHTML = `
+        <div class="output-card" data-output-card="stream">
+          <div class="audio-card-header">
+            <div class="audio-title-group">
+              <div>
+                <div class="audio-card-title">Stream</div>
+                <div class="audio-card-type">RTMP / SRT outputs 1–3</div>
+              </div>
+            </div>
+            <span class="output-status-pill" data-output-status>STOPPED</span>
+          </div>
+          <div class="output-btn-row">
+            <button type="button" class="btn btn-primary btn-sm" data-output-action="stream-start">Start</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-output-action="stream-stop">Stop</button>
+            <select class="search-input output-stream-select" data-output-stream title="Stream number">
+              <option value="">All streams</option>
+              <option value="0">Stream 1</option>
+              <option value="1">Stream 2</option>
+              <option value="2">Stream 3</option>
+            </select>
+          </div>
+          <div class="output-rtmp-group">
+            <div class="form-group">
+              <label>Custom RTMP URL</label>
+              <input type="text" class="search-input" data-output-rtmp="url" placeholder="rtmp://live.example.com/app" autocomplete="off">
+            </div>
+            <div class="form-row">
+              <div class="form-group col-half">
+                <label>Stream key</label>
+                <input type="password" class="search-input" data-output-rtmp="key" placeholder="key" autocomplete="off">
+              </div>
+              <div class="form-group col-half">
+                <label>Username</label>
+                <input type="text" class="search-input" data-output-rtmp="user" placeholder="optional" autocomplete="off">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group col-half">
+                <label>Password</label>
+                <input type="password" class="search-input" data-output-rtmp="pass" placeholder="optional" autocomplete="off">
+              </div>
+              <div class="form-group col-half output-apply-col">
+                <button type="button" class="btn btn-secondary btn-sm" data-output-action="rtmp-apply">Apply RTMP</button>
+              </div>
+            </div>
+          </div>
+          <div class="output-note">Provider, bitrate and quality are vMix-only (Stream settings cog in vMix).</div>
+        </div>
+        <div class="output-card" data-output-card="record">
+          <div class="audio-card-header">
+            <div class="audio-title-group">
+              <div>
+                <div class="audio-card-title">Recording</div>
+                <div class="audio-card-type">Program ISO file</div>
+              </div>
+            </div>
+            <span class="output-status-pill" data-output-status>STOPPED</span>
+          </div>
+          <div class="output-btn-row">
+            <button type="button" class="btn btn-primary btn-sm" data-output-action="rec-start">Start</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-output-action="rec-stop">Stop</button>
+          </div>
+          <div class="output-note">Format, path and quality are vMix-only (Recording settings in vMix).</div>
+        </div>
+        <div class="output-card" data-output-card="external">
+          <div class="audio-card-header">
+            <div class="audio-title-group">
+              <div>
+                <div class="audio-card-title">External Output</div>
+                <div class="audio-card-type">Decklink / fullscreen device</div>
+              </div>
+            </div>
+            <span class="output-status-pill" data-output-status>STOPPED</span>
+          </div>
+          <div class="output-btn-row">
+            <button type="button" class="btn btn-primary btn-sm" data-output-action="ext-start">Start</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-output-action="ext-stop">Stop</button>
+          </div>
+          <div class="form-group">
+            <label>External2 source</label>
+            <div class="output-btn-row">
+              <select class="search-input" data-output-ext2 title="External2 source">
+                <option value="Output">Program Output</option>
+                <option value="Preview">Preview</option>
+                <option value="MultiView">MultiView</option>
+                <option value="Replay">Replay</option>
+              </select>
+              <button type="button" class="btn btn-secondary btn-sm" data-output-action="ext2-apply">Apply</button>
+            </div>
+          </div>
+          <div class="output-note">Output device is vMix-only (External settings in vMix).</div>
+        </div>
+        <div class="output-card" data-output-card="multicorder">
+          <div class="audio-card-header">
+            <div class="audio-title-group">
+              <div>
+                <div class="audio-card-title">MultiCorder</div>
+                <div class="audio-card-type">ISO record per input</div>
+              </div>
+            </div>
+            <span class="output-status-pill" data-output-status>STOPPED</span>
+          </div>
+          <div class="output-btn-row">
+            <button type="button" class="btn btn-primary btn-sm" data-output-action="mc-start">Start</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-output-action="mc-stop">Stop</button>
+          </div>
+          <div class="output-note">Recorded inputs and format are vMix-only (MultiCorder settings in vMix).</div>
+        </div>
+      `;
+      this.dom.outputsGrid.querySelectorAll('[data-output-action]').forEach(btn => {
+        btn.addEventListener('click', () => this.handleOutputAction(btn.dataset.outputAction));
+      });
+    }
+    this.updateOutputs(state);
+  }
+
+  updateOutputs(state) {
+    if (!this.dom.outputsGrid || !this.dom.outputsGrid.dataset.built) return;
+    const set = (card, on, onText, offText) => {
+      const pill = this.dom.outputsGrid.querySelector(`[data-output-card="${card}"] [data-output-status]`);
+      if (!pill) return;
+      const text = on ? onText : offText;
+      if (pill.textContent !== text) pill.textContent = text;
+      pill.classList.toggle('on', Boolean(on));
+    };
+    set('stream', state.streaming, 'STREAMING', 'STOPPED');
+    set('record', state.recording, 'RECORDING', 'STOPPED');
+    set('external', state.external, 'ACTIVE', 'STOPPED');
+    set('multicorder', state.multiCorder, 'RECORDING', 'STOPPED');
+
+    if (this.dom.outputsLiveCount) {
+      const n = [state.streaming, state.recording, state.external, state.multiCorder].filter(Boolean).length;
+      const text = n === 0 ? 'All Stopped' : `${n} Active Output${n === 1 ? '' : 's'}`;
+      if (this.dom.outputsLiveCount.textContent !== text) {
+        this.dom.outputsLiveCount.textContent = text;
+      }
+    }
+  }
+
+  outputStreamValue() {
+    const sel = this.dom.outputsGrid ? this.dom.outputsGrid.querySelector('[data-output-stream]') : null;
+    return sel ? sel.value : '';
+  }
+
+  async handleOutputAction(action) {
+    this.vibrate();
+    try {
+      switch (action) {
+        case 'stream-start': {
+          const v = this.outputStreamValue();
+          this.playTone(700, 0.05);
+          await API.executeFunction('StartStreaming', v === '' ? {} : { Value: v });
+          this.showToast(v === '' ? 'Starting all streams' : `Starting stream ${parseInt(v, 10) + 1}`);
+          break;
+        }
+        case 'stream-stop': {
+          const v = this.outputStreamValue();
+          this.playTone(350, 0.05);
+          await API.executeFunction('StopStreaming', v === '' ? {} : { Value: v });
+          this.showToast(v === '' ? 'Stopping all streams' : `Stopping stream ${parseInt(v, 10) + 1}`);
+          break;
+        }
+        case 'rtmp-apply': {
+          const n = this.outputStreamValue() === '' ? '0' : this.outputStreamValue();
+          const get = (k) => {
+            const el = this.dom.outputsGrid.querySelector(`[data-output-rtmp="${k}"]`);
+            return el ? el.value.trim() : '';
+          };
+          const fields = [['url', 'StreamingSetURL'], ['key', 'StreamingSetKey'],
+                          ['user', 'StreamingSetUsername'], ['pass', 'StreamingSetPassword']];
+          const jobs = fields.filter(([k]) => get(k) !== '')
+            .map(([k, fn]) => API.executeFunction(fn, { Value: `${n},${get(k)}` }));
+          if (jobs.length === 0) {
+            this.showToast('Enter a URL, key, username or password first', 3000);
+            return;
+          }
+          if (!confirm(`Point custom RTMP stream ${parseInt(n, 10) + 1} at the entered destination?`)) return;
+          this.playTone(700, 0.05);
+          await Promise.all(jobs);
+          this.showToast(`Stream ${parseInt(n, 10) + 1} RTMP destination saved in vMix`);
+          break;
+        }
+        case 'rec-start':
+          this.playTone(700, 0.05);
+          await API.executeFunction('StartRecording');
+          this.showToast('Recording started');
+          break;
+        case 'rec-stop':
+          if (!confirm('Stop the recording?')) return;
+          this.playTone(350, 0.05);
+          await API.executeFunction('StopRecording');
+          this.showToast('Recording stopped');
+          break;
+        case 'ext-start':
+          this.playTone(700, 0.05);
+          await API.executeFunction('StartExternal');
+          this.showToast('External output started');
+          break;
+        case 'ext-stop':
+          this.playTone(350, 0.05);
+          await API.executeFunction('StopExternal');
+          this.showToast('External output stopped');
+          break;
+        case 'ext2-apply': {
+          const sel = this.dom.outputsGrid.querySelector('[data-output-ext2]');
+          const src = sel ? sel.value : 'Output';
+          this.playTone(700, 0.05);
+          await API.executeFunction('SetOutputExternal2', { Value: src });
+          this.showToast(`External2 source → ${src}`);
+          break;
+        }
+        case 'mc-start':
+          this.playTone(700, 0.05);
+          await API.executeFunction('StartMultiCorder');
+          this.showToast('MultiCorder started');
+          break;
+        case 'mc-stop':
+          if (!confirm('Stop the MultiCorder?')) return;
+          this.playTone(350, 0.05);
+          await API.executeFunction('StopMultiCorder');
+          this.showToast('MultiCorder stopped');
+          break;
+      }
+    } catch (err) {
+      console.error('Output action failed', err);
+      this.showToast(err.message || 'Output action failed', 3500);
     }
   }
 

@@ -179,6 +179,39 @@ def test_all():
         assert res.get("streaming") is True, f"Expected streaming True, got {res.get('streaming')}"
         print("✓ StartStopStreaming toggle ON verified")
 
+        # 15b. Outputs console: explicit start/stop for stream/record/external/multicorder
+        for fn, key in [("StopStreaming", "streaming"), ("StartStreaming", "streaming"),
+                        ("StopRecording", "recording"), ("StartRecording", "recording"),
+                        ("StopExternal", "external"), ("StartExternal", "external"),
+                        ("StopMultiCorder", "multiCorder"), ("StartMultiCorder", "multiCorder")]:
+            status, res = req(f"{base}/api/vmix/function", "POST", {"function": fn}, token=token)
+            assert status == 200 and res.get("success") is True, f"{fn} failed: {res}"
+        time.sleep(0.2)
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        assert res.get("streaming") is True, res
+        assert res.get("recording") is True, res
+        assert res.get("external") is True, res
+        assert res.get("multiCorder") is True, f"Expected multiCorder True, got {res.get('multiCorder')}"
+        print("✓ Explicit output start functions verified (stream/record/external/multicorder)")
+
+        status, res = req(f"{base}/api/vmix/function", "POST", {"function": "StartStopMultiCorder"}, token=token)
+        assert status == 200
+        time.sleep(0.2)
+        status, res = req(f"{base}/api/vmix/state", "GET", token=token)
+        assert res.get("multiCorder") is False, "Expected multiCorder toggled OFF"
+        print("✓ MultiCorder toggle + state flag verified")
+
+        # 15c. Stream destination setters accepted (custom RTMP URL/key/user/pass)
+        for fn, val in [("StreamingSetURL", "0,rtmp://test.example/live"),
+                        ("StreamingSetKey", "0,testkey"),
+                        ("StreamingSetUsername", "0,testuser"),
+                        ("StreamingSetPassword", "0,testpass"),
+                        ("SetOutputExternal2", None)]:
+            body = {"function": fn} if val is None else {"function": fn, "params": {"Value": val}}
+            status, res = req(f"{base}/api/vmix/function", "POST", body, token=token)
+            assert status == 200 and res.get("success") is True, f"{fn} failed: {res}"
+        print("✓ Stream destination + External2 routing functions verified")
+
         # 15. Test Audio Volume Endpoint & State
         status, res = req(f"{base}/api/vmix/volume", "POST", {"input": 7, "volume": 65}, token=token)
         assert status == 200 and res.get("success") is True

@@ -106,7 +106,7 @@ python -m pytest test/ -v
 
 ## 🎛️ App Modes & How to use
 
-The switcher features 3 dedicated operational modes accessible via the top tab bar:
+The switcher features 3 dedicated operational modes accessible via the top tab bar, plus an Outputs console:
 
 ### 1. 🎬 Video Switcher Mode
 - **Snapshot Monitors:** Program & Preview snapshots pulled from vMix at the top of the console (IMG:LIVE pill = real image).
@@ -129,6 +129,12 @@ The switcher features 3 dedicated operational modes accessible via the top tab b
 - **Production Clock:** Live high-visibility production studio clock.
 - **Multi-Camera Grid:** Multiview camera layout with red/green tally borders; tap any camera to switch or stage.
 - **Dedicated Fullscreen:** One-click expansion for secondary monitors or multiviewer displays.
+
+### 4. 🔴 Outputs Console Mode
+- **Stream:** Start/Stop all streams or stream 1–3 individually; set a custom RTMP URL, key, username and password per stream (provider, bitrate and quality stay in vMix — the API does not expose them).
+- **Recording:** Explicit Start/Stop (format, path and quality stay in vMix).
+- **External Output:** Explicit Start/Stop plus External2 source routing (Program/Preview/MultiView/Replay). Output device stays in vMix.
+- **MultiCorder:** Start/Stop the ISO recorder with live status (recorded inputs and format stay in vMix).
 
 - **Direct Switch (default):** tap a source → it transitions straight to Program output.
 - **Change transition:** dropdown at top center (`Fade`, `Cut`, `Zoom`, `Wipe`, `Slide`, `Fly`, `CrossZoom`, `Merge`, `Transition 1/2` + duration).

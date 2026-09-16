@@ -149,6 +149,7 @@ class VMixClient:
         streaming = (root.findtext("streaming", "False") or "").lower() == "true"
         fullscreen = (root.findtext("fullscreen", "False") or "").lower() == "true"
         external = (root.findtext("external", "False") or "").lower() == "true"
+        multi_corder = (root.findtext("multiCorder", "False") or "").lower() == "true"
 
         # Overlays
         overlays: Dict[str, Optional[int]] = {"1": None, "2": None, "3": None, "4": None}
@@ -223,6 +224,7 @@ class VMixClient:
             "streaming": streaming,
             "fullscreen": fullscreen,
             "external": external,
+            "multiCorder": multi_corder,
             "overlays": overlays,
             "inputs": inputs
         }
@@ -288,6 +290,7 @@ class VMixClient:
             full_state.get("streaming"),
             full_state.get("fullscreen"),
             full_state.get("external"),
+            full_state.get("multiCorder"),
             full_state.get("defaultTransition"),
             full_state.get("transitionDuration"),
             full_state.get("switcherMode"),

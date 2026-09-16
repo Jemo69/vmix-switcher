@@ -9,6 +9,7 @@ class MockVMix:
         self.fullscreen = False
         self.fade_to_black = False
         self.external = False
+        self.multi_corder = False
         self.overlays: Dict[str, Any] = {"1": None, "2": None, "3": None, "4": None}
 
         self.inputs: List[Dict[str, Any]] = [
@@ -49,6 +50,7 @@ class MockVMix:
             "streaming": self.streaming,
             "fullscreen": self.fullscreen,
             "external": self.external,
+            "multiCorder": self.multi_corder,
             "fadeToBlack": self.fade_to_black,
             "overlays": dict(self.overlays),
             "inputs": processed_inputs
@@ -108,10 +110,28 @@ class MockVMix:
                     break
         elif fn in ("startstoprecording", "recording"):
             self.recording = not self.recording
+        elif fn in ("startrecording",):
+            self.recording = True
+        elif fn in ("stoprecording",):
+            self.recording = False
         elif fn in ("startstopstreaming", "streaming"):
             self.streaming = not self.streaming
+        elif fn in ("startstreaming",):
+            self.streaming = True
+        elif fn in ("stopstreaming",):
+            self.streaming = False
         elif fn in ("startstopexternal", "external"):
             self.external = not self.external
+        elif fn in ("startexternal",):
+            self.external = True
+        elif fn in ("stopexternal",):
+            self.external = False
+        elif fn in ("startstopmulticorder", "multicorder"):
+            self.multi_corder = not self.multi_corder
+        elif fn in ("startmulticorder",):
+            self.multi_corder = True
+        elif fn in ("stopmulticorder",):
+            self.multi_corder = False
         elif fn == "fullscreen":
             self.fullscreen = not self.fullscreen
 

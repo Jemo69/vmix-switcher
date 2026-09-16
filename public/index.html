@@ -73,6 +73,12 @@
           </svg>
           <span>Preview Mode</span>
         </button>
+        <button id="tab-outputs" class="mode-tab-btn" data-view="outputs">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M12 3C7.03 3 3 7.03 3 12s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7zm-1-10v6l5 3 1-1.73-4-2.42V9H11z"/>
+          </svg>
+          <span>Outputs</span>
+        </button>
       </nav>
 
       <!-- Broadcast Control Buttons (Interactive: REC, STREAM, EXTERNAL, FULLSCREEN) -->
@@ -330,6 +336,24 @@
             <!-- Dynamically populated camera monitor cards -->
           </div>
 
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== VIEW 4: OUTPUTS (STREAM / RECORD / EXTERNAL / MULTICORDER) ==================== -->
+    <div id="view-outputs" class="view-panel hidden">
+      <div class="audio-control-header">
+        <div class="audio-header-left">
+          <div class="audio-header-title-group">
+            <h3>Outputs Console</h3>
+            <span class="audio-active-count-pill" id="outputs-live-count">All Stopped</span>
+          </div>
+          <p class="audio-header-desc">Start and stop vMix outputs and set the custom RTMP destination. Provider, quality and file settings live in vMix itself — the API does not expose them.</p>
+        </div>
+      </div>
+      <div class="audio-viewport">
+        <div id="outputs-grid" class="audio-channels-grid">
+          <!-- Output cards generated once, patched in place -->
         </div>
       </div>
     </div>
