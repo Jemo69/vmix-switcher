@@ -19,12 +19,10 @@ class SwitcherApp {
     this.toastTimer = null;
     // Program monitor source mode: 'img' (snapshots) | 'live' (low-latency
     // MJPEG capture, sub-second) | 'video' (LiveLAN iframe, ~10s delay).
-    // Migrates the old vmix_live_video flag (1 = video, else img).
-    this.monitorMode = localStorage.getItem('vmix_monitor_mode') || null;
-    if (!this.monitorMode) {
-      this.monitorMode = localStorage.getItem('vmix_live_video') === '1' ? 'video' : 'img';
-      try { localStorage.setItem('vmix_monitor_mode', this.monitorMode); } catch {}
-    }
+    // No explicit choice yet -> the app takes LIVE by itself the moment the
+    // server reports it (that is the whole point of the feature).
+    this.monitorMode = localStorage.getItem('vmix_monitor_mode_v2') || 'img';
+    this._monitorPrefStored = Boolean(localStorage.getItem('vmix_monitor_mode_v2'));
     this.liveCapAvailable = false;
     this.liveCapFps = 25;
     this.liveCapError = '';
@@ -970,7 +968,7 @@ class SwitcherApp {
     this.setMonitorMode(next);
   }
 
-  setMonitorMode(mode) {
+  setMonitorMode(mode, store = true) {
     if (!['img', 'live', 'video'].includes(mode)) mode = 'img';
     if (mode === 'live' && !this.liveCapAvailable) {
       const reason = this.liveCapError || 'live capture unavailable';
@@ -978,7 +976,10 @@ class SwitcherApp {
       mode = 'img';
     }
     this.monitorMode = mode;
-    try { localStorage.setItem('vmix_monitor_mode', mode); } catch {}
+    if (store) {
+      try { localStorage.setItem('vmix_monitor_mode_v2', mode); } catch {}
+      this._monitorPrefStored = true;
+    }
     this.liveFallbackToasted = false;
     this.applyMonitorMode();
     this.vibrate();
@@ -987,8 +988,14 @@ class SwitcherApp {
   onLiveStreamError() {
     if (this.monitorMode !== 'live' || this.liveFallbackToasted) return;
     this.liveFallbackToasted = true;
-    this.showToast('Live stream interrupted — back to snapshots', 3000);
-    this.setMonitorMode('img');
+    const reason = this.liveCapError || 'live capture stopped';
+    this.showToast(`LIVE unavailable (${reason}) — showing snapshots`, 3500);
+    // Fall back WITHOUT storing: no explicit choice was overridden, so the
+    // app rejoins LIVE by itself when capture comes back.
+    this.monitorMode = 'img';
+    this._monitorPrefStored = false;
+    try { localStorage.removeItem('vmix_monitor_mode_v2'); } catch {}
+    this.applyMonitorMode();
   }
 
   applyMonitorMode() {
@@ -1258,13 +1265,25 @@ class SwitcherApp {
     if (liveAvail !== this.liveCapAvailable) {
       this.liveCapAvailable = liveAvail;
       this.liveCapError = state.liveCapError || '';
-      // Capture just came up while the operator waits on snapshots: offer
-      // LIVE without yanking their current mode.
-      if (!liveAvail && this.monitorMode === 'live') {
-        this.onLiveStreamError();
+      if (!liveAvail) {
+        if (this.monitorMode === 'live') {
+          this.onLiveStreamError();
+        } else {
+          monitorLayersDirty = true;
+        }
+      } else if (!this._monitorPrefStored && this.monitorMode !== 'live') {
+        // No explicit choice on this device yet: take the real-time feed
+        // by itself instead of sitting on the snapshot slideshow.
+        this.setMonitorMode('live');
+        this.showToast('LIVE stream on — real-time Program', 2500);
       } else {
         monitorLayersDirty = true;
       }
+    }
+    if (this.monitorMode === 'live' && !this.liveCapAvailable) {
+      // Stored 'live' pref the server cannot honor (or first state before
+      // capture reported): never sit on a dead LIVE label.
+      this.onLiveStreamError();
     } else if (typeof state.liveCapFps === 'number' && state.liveCapFps !== this.liveCapFps
                && this.monitorMode !== 'live') {
       this.liveCapFps = state.liveCapFps;
